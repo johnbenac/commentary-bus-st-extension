@@ -1,0 +1,21 @@
+{
+  "display_name": "Commentary Bus",
+  "author": "Johnny",
+  "version": "1.0.0",
+  "description": "Receive live commentary from external processes in your SillyTavern chats",
+  "js": "index.js",
+  "requires": [],
+  "optional": [],
+  "loading_order": 10,
+  "auto_update": true,
+  "homePage": "https://github.com/johnb/commentary-bus-st-extension",
+  "metadata": {
+    "settings": {
+      "enabled": true,
+      "serverUrl": "http://127.0.0.1:5055",
+      "channel": "default",
+      "speaker": "Commentator",
+      "logHeartbeats": false
+    }
+  }
+}
