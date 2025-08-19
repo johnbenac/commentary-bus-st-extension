@@ -1,249 +1,283 @@
 /**
- * Commentary Bus Extension for SillyTavern
- * Receives messages from external processes and injects them into group chats
+ * Commentary Bus (refactored for modern SillyTavern, 2025-08)
+ * - Visible drawer in Extensions panel (#extensions_settings2, with fallback)
+ * - Uses SillyTavern.getContext() APIs
+ * - Robust SSE connection with reconnect + channeling
+ * - Injects messages via /sendas using current slash-command engine
  */
-
 (() => {
   const MODULE = 'commentaryBus';
-  const MODULE_DISPLAY = 'Commentary Bus';
+  const TITLE = 'Commentary Bus';
+  const UI_ROOT_ID = 'cbus-settings-root';
 
-  function getCtx() { 
-    return SillyTavern.getContext(); 
-  }
+  const defaults = Object.freeze({
+    enabled: true,
+    serverUrl: 'http://127.0.0.1:5055',
+    channel: 'default',      // or "auto"
+    speaker: 'Commentator',
+    logHeartbeats: false
+  });
 
-  // Store current connection
-  let currentConnection = null;
+  /** @type {ReturnType<typeof SillyTavern.getContext>} */
+  const ctx = SillyTavern.getContext();
+  const { eventSource, event_types } = ctx;
 
-  async function connect() {
-    const ctx = getCtx();
-    
-    // Initialize settings with defaults
+  // --- State ---
+  let es = null;           // EventSource handle
+  let lastUrl = '';        // last connected URL (for logs)
+  let mounted = false;     // settings drawer mounted?
+
+  // --- Settings helpers ---
+  function ensureSettings() {
     if (!ctx.extensionSettings[MODULE]) {
-      ctx.extensionSettings[MODULE] = {
-        enabled: true,
-        serverUrl: 'http://127.0.0.1:5055',
-        channel: 'default',
-        speaker: 'Commentator',
-        logHeartbeats: false,
-      };
+      ctx.extensionSettings[MODULE] = { ...defaults };
+      ctx.saveSettingsDebounced();
+    } else {
+      // backfill any missing keys to survive ST updates
+      for (const [k, v] of Object.entries(defaults)) {
+        if (!Object.hasOwn(ctx.extensionSettings[MODULE], k)) {
+          ctx.extensionSettings[MODULE][k] = v;
+        }
+      }
       ctx.saveSettingsDebounced();
     }
+  }
 
-    const settings = ctx.extensionSettings[MODULE];
-    
-    // Skip if disabled
-    if (!settings.enabled) {
-      console.log(`[${MODULE_DISPLAY}] Extension disabled`);
+  function getSettings() {
+    ensureSettings();
+    return ctx.extensionSettings[MODULE];
+  }
+
+  // --- Channel helper (auto = per group/char) ---
+  function computeChannel() {
+    const st = getSettings();
+    if (st.channel !== 'auto') return st.channel;
+
+    const gid = ctx.groupId;
+    const cid = ctx.characterId;
+    return gid ? `group-${gid}` : `char-${cid ?? 'unknown'}`;
+  }
+
+  // --- UI ---
+  function settingsHtml() {
+    return `
+      <div id="${UI_ROOT_ID}" class="commentary-bus-settings">
+        <div class="inline-drawer">
+          <div class="inline-drawer-toggle inline-drawer-header">
+            <b>${TITLE}</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+          </div>
+          <div class="inline-drawer-content">
+            <label class="checkbox_label">
+              <input id="cbus-enabled" type="checkbox" />
+              <span>Enable</span>
+            </label>
+
+            <label for="cbus-server">Server URL:</label>
+            <input id="cbus-server" class="text_pole" type="text" placeholder="http://127.0.0.1:5055" />
+
+            <label for="cbus-channel">Channel:</label>
+            <input id="cbus-channel" class="text_pole" type="text" placeholder="default or auto" />
+            <small>Use <code>auto</code> to bind to the current group/character.</small>
+
+            <label for="cbus-speaker">Speaker name (/sendas):</label>
+            <input id="cbus-speaker" class="text_pole" type="text" placeholder="Commentator" />
+
+            <label class="checkbox_label" title="Log heartbeat events to console">
+              <input id="cbus-log-heartbeats" type="checkbox" />
+              <span>Log heartbeats</span>
+            </label>
+
+            <div class="commentary-bus-actions" style="margin-top: 10px;">
+              <button id="cbus-test" class="menu_button">Test Connection</button>
+              <button id="cbus-reconnect" class="menu_button">Reconnect</button>
+            </div>
+
+            <div class="monospace" style="margin-top:6px;color:var(--SmartThemeBodyColor45)">
+              <div>Active Channel: <code id="cbus-active-channel">?</code></div>
+              <div>Last URL: <code id="cbus-last-url">-</code></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function getExtensionsPanel() {
+    return document.querySelector('#extensions_settings2') || document.querySelector('#extensions_settings');
+  }
+
+  function mountSettings() {
+    const panel = getExtensionsPanel();
+    if (!panel) return;
+    // Idempotent mount
+    const existing = document.getElementById(UI_ROOT_ID);
+    if (existing) { mounted = true; return; }
+    panel.insertAdjacentHTML('beforeend', settingsHtml());
+    bindSettings();
+    mounted = true;
+    refreshSettingsUI();
+  }
+
+  function bindSettings() {
+    const st = getSettings();
+
+    $('#cbus-enabled').on('change', function () {
+      st.enabled = this.checked;
+      ctx.saveSettingsDebounced();
+      if (st.enabled) connect();
+      else disconnect();
+    });
+
+    $('#cbus-server').on('input', function () {
+      st.serverUrl = this.value.trim();
+      ctx.saveSettingsDebounced();
+    });
+
+    $('#cbus-channel').on('input', function () {
+      st.channel = this.value.trim();
+      ctx.saveSettingsDebounced();
+      // update channel indicator
+      $('#cbus-active-channel').text(computeChannel());
+    });
+
+    $('#cbus-speaker').on('input', function () {
+      st.speaker = this.value.trim();
+      ctx.saveSettingsDebounced();
+    });
+
+    $('#cbus-log-heartbeats').on('change', function () {
+      st.logHeartbeats = this.checked;
+      ctx.saveSettingsDebounced();
+    });
+
+    $('#cbus-test').on('click', async () => {
+      try {
+        const res = await fetch(st.serverUrl.replace(/\/$/, '') + '/status');
+        const data = await res.json();
+        toastr.success(`Bus OK · clients: ${data.clientsTotal ?? data.clients ?? 'n/a'}`, TITLE);
+      } catch (e) {
+        console.error(e);
+        toastr.error('Failed to reach Commentary Bus', TITLE);
+      }
+    });
+
+    $('#cbus-reconnect').on('click', () => {
       disconnect();
-      return;
+      setTimeout(connect, 100);
+    });
+  }
+
+  function refreshSettingsUI() {
+    const st = getSettings();
+    $('#cbus-enabled').prop('checked', !!st.enabled);
+    $('#cbus-server').val(st.serverUrl);
+    $('#cbus-channel').val(st.channel);
+    $('#cbus-speaker').val(st.speaker);
+    $('#cbus-log-heartbeats').prop('checked', !!st.logHeartbeats);
+    $('#cbus-active-channel').text(computeChannel());
+    $('#cbus-last-url').text(lastUrl || '-');
+  }
+
+  // Remount when Extensions panel re-renders
+  const mo = new MutationObserver(() => {
+    if (!document.getElementById(UI_ROOT_ID)) {
+      mounted = false;
+      mountSettings();
     }
+  });
+  mo.observe(document.body, { childList: true, subtree: true });
 
-    // Determine channel based on current context
-    const activeGroupId = ctx.groupId || 'solo';
-    const activeCharacter = ctx.characterId || 'unknown';
-    const contextId = ctx.groupId ? `group-${activeGroupId}` : `char-${activeCharacter}`;
-    const channel = settings.channel === 'auto' ? contextId : settings.channel;
+  // --- SSE connection ---
+  function disconnect() {
+    if (es) {
+      try { es.close(); } catch {}
+      es = null;
+      lastUrl = '';
+    }
+  }
 
-    // Close existing connection
+  async function sendAs(name, text) {
+    // Prefer the modern helper if present
+    try {
+      const mod = await import('/scripts/slash-commands.js');
+      const run = mod.executeSlashCommandsWithOptions || mod.executeSlashCommands;
+      // preserve quotes reliably with raw=true (supported in recent STscript updates)
+      const cmd = `/sendas name="${name}" raw=true ${text}`;
+      await run(cmd);
+    } catch (err) {
+      console.error(`[${TITLE}] /sendas failed`, err);
+      toastr.error('Failed to inject message', TITLE);
+    }
+  }
+
+  function connect() {
+    const st = getSettings();
+    if (!st.enabled) return;
+
     disconnect();
 
+    const channel = computeChannel();
+    const url = `${st.serverUrl.replace(/\/$/, '')}/events?channel=${encodeURIComponent(channel)}`;
+    lastUrl = url;
+    refreshSettingsUI();
+
     try {
-      const url = `${settings.serverUrl.replace(/\/$/, '')}/events?channel=${encodeURIComponent(channel)}`;
-      console.log(`[${MODULE_DISPLAY}] Connecting to ${url}`);
-      
-      const es = new EventSource(url);
-      currentConnection = es;
+      es = new EventSource(url);
 
       es.addEventListener('connected', (e) => {
-        console.log(`[${MODULE_DISPLAY}] Connected:`, e.data);
-        toastr.success(`Connected to channel: ${channel}`, MODULE_DISPLAY);
+        console.log(`[${TITLE}] connected → ${url}`, e?.data);
+        toastr.success(`Connected (${channel})`, TITLE);
       });
 
       es.addEventListener('heartbeat', (e) => {
-        if (settings.logHeartbeats) {
-          console.debug(`[${MODULE_DISPLAY}] Heartbeat:`, e.data);
+        if (st.logHeartbeats) {
+          try { console.debug(`[${TITLE}] heartbeat`, JSON.parse(e.data)); }
+          catch { console.debug(`[${TITLE}] heartbeat`, e.data); }
         }
       });
 
       es.addEventListener('chat', async (e) => {
         try {
-          const payload = JSON.parse(e.data || '{}');
-          const name = String(payload.name || settings.speaker);
-          const text = String(payload.text || '').trim();
-          
-          if (!text) {
-            console.warn(`[${MODULE_DISPLAY}] Received empty message`);
-            return;
-          }
-
-          console.log(`[${MODULE_DISPLAY}] Received message from ${name}: ${text}`);
-
-          // Use /sendas to inject the message
-          try {
-            const { executeSlashCommands } = await import('/scripts/slash-commands.js');
-            // Escape quotes in the text
-            const escapedText = text.replace(/"/g, '\\"');
-            const command = `/sendas name="${name}" ${escapedText}`;
-            
-            console.debug(`[${MODULE_DISPLAY}] Executing command:`, command);
-            await executeSlashCommands(command);
-            
-          } catch (cmdError) {
-            console.error(`[${MODULE_DISPLAY}] Failed to execute /sendas:`, cmdError);
-            toastr.error('Failed to inject message', MODULE_DISPLAY);
-          }
-          
-        } catch (parseError) {
-          console.error(`[${MODULE_DISPLAY}] Failed to parse chat message:`, parseError);
+          const payload = JSON.parse(e.data ?? '{}');
+          const name = String(payload.name || st.speaker || 'Commentator');
+          const text = String(payload.text ?? '').trim();
+          if (!text) return;
+          await sendAs(name, text);
+        } catch (err) {
+          console.error(`[${TITLE}] bad chat payload`, err, e?.data);
         }
       });
 
-      es.onerror = (e) => {
-        console.error(`[${MODULE_DISPLAY}] Connection error:`, e);
-        toastr.error('Connection lost, retrying...', MODULE_DISPLAY);
-        
-        // Auto-reconnect after a delay
+      es.onerror = () => {
+        console.warn(`[${TITLE}] SSE error, will retry`, url);
+        toastr.error('Connection lost, retrying…', TITLE);
+        // Let EventSource auto-retry; if it fully closes, kick a reconnect
         setTimeout(() => {
-          if (currentConnection === es && ctx.extensionSettings[MODULE]?.enabled) {
-            connect();
-          }
+          if (es && es.readyState === EventSource.CLOSED && getSettings().enabled) connect();
         }, 2000);
       };
-
-    } catch (error) {
-      console.error(`[${MODULE_DISPLAY}] Failed to connect:`, error);
-      toastr.error('Failed to connect to Commentary Bus', MODULE_DISPLAY);
+    } catch (err) {
+      console.error(`[${TITLE}] failed to connect`, err);
+      toastr.error('Failed to connect to Commentary Bus', TITLE);
     }
   }
 
-  function disconnect() {
-    if (currentConnection) {
-      try {
-        currentConnection.close();
-        console.log(`[${MODULE_DISPLAY}] Disconnected`);
-      } catch (e) {
-        // Ignore close errors
-      }
-      currentConnection = null;
-    }
-  }
+  // --- Lifecycle hooks ---
+  ensureSettings();
+  // connect at app ready, and on chat/group switch if using auto channel
+  eventSource.on(event_types.APP_READY, () => {
+    mountSettings();
+    if (getSettings().enabled) connect();
+  });
 
-  // Register extension
-  SillyTavern.registerExtension(MODULE, {
-    name: MODULE_DISPLAY,
-    init: async () => {
-      const ctx = getCtx();
-      
-      // Register event handlers
-      ctx.eventSource.on(ctx.event_types.APP_READY, connect);
-      ctx.eventSource.on(ctx.event_types.CHAT_CHANGED, connect);
-      
-      // Add settings UI
-      const settingsHtml = `
-        <div class="commentary-bus-settings">
-          <div class="inline-drawer">
-            <div class="inline-drawer-toggle inline-drawer-header">
-              <b>${MODULE_DISPLAY}</b>
-              <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-            </div>
-            <div class="inline-drawer-content">
-              <label class="checkbox_label">
-                <input id="commentary-bus-enabled" type="checkbox" />
-                <span>Enable Commentary Bus</span>
-              </label>
-              
-              <label for="commentary-bus-server">Server URL:</label>
-              <input id="commentary-bus-server" class="text_pole" type="text" placeholder="http://127.0.0.1:5055" />
-              
-              <label for="commentary-bus-channel">Channel:</label>
-              <input id="commentary-bus-channel" class="text_pole" type="text" placeholder="default or auto" />
-              <small>Use "auto" to automatically use group/character ID</small>
-              
-              <label for="commentary-bus-speaker">Default Speaker Name:</label>
-              <input id="commentary-bus-speaker" class="text_pole" type="text" placeholder="Commentator" />
-              
-              <label class="checkbox_label">
-                <input id="commentary-bus-log-heartbeats" type="checkbox" />
-                <span>Log heartbeats (debug)</span>
-              </label>
-              
-              <div class="commentary-bus-actions" style="margin-top: 10px;">
-                <button id="commentary-bus-test" class="menu_button">Test Connection</button>
-                <button id="commentary-bus-reconnect" class="menu_button">Reconnect</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
-      
-      $('#extensions_settings').append(settingsHtml);
-      
-      // Load settings into UI
-      const settings = ctx.extensionSettings[MODULE] || {};
-      $('#commentary-bus-enabled').prop('checked', settings.enabled ?? true);
-      $('#commentary-bus-server').val(settings.serverUrl || 'http://127.0.0.1:5055');
-      $('#commentary-bus-channel').val(settings.channel || 'default');
-      $('#commentary-bus-speaker').val(settings.speaker || 'Commentator');
-      $('#commentary-bus-log-heartbeats').prop('checked', settings.logHeartbeats ?? false);
-      
-      // Handle settings changes
-      $('#commentary-bus-enabled').on('change', function() {
-        ctx.extensionSettings[MODULE].enabled = this.checked;
-        ctx.saveSettingsDebounced();
-        if (this.checked) {
-          connect();
-        } else {
-          disconnect();
-        }
-      });
-      
-      $('#commentary-bus-server').on('input', function() {
-        ctx.extensionSettings[MODULE].serverUrl = this.value;
-        ctx.saveSettingsDebounced();
-      });
-      
-      $('#commentary-bus-channel').on('input', function() {
-        ctx.extensionSettings[MODULE].channel = this.value;
-        ctx.saveSettingsDebounced();
-      });
-      
-      $('#commentary-bus-speaker').on('input', function() {
-        ctx.extensionSettings[MODULE].speaker = this.value;
-        ctx.saveSettingsDebounced();
-      });
-      
-      $('#commentary-bus-log-heartbeats').on('change', function() {
-        ctx.extensionSettings[MODULE].logHeartbeats = this.checked;
-        ctx.saveSettingsDebounced();
-      });
-      
-      // Action buttons
-      $('#commentary-bus-test').on('click', async () => {
-        const settings = ctx.extensionSettings[MODULE];
-        try {
-          const response = await fetch(`${settings.serverUrl}/status`);
-          const data = await response.json();
-          toastr.success(`Server running with ${data.clients} clients`, MODULE_DISPLAY);
-        } catch (error) {
-          toastr.error('Failed to reach server', MODULE_DISPLAY);
-        }
-      });
-      
-      $('#commentary-bus-reconnect').on('click', () => {
-        disconnect();
-        setTimeout(connect, 100);
-      });
-      
-      // Start connection if enabled
-      if (settings.enabled) {
-        connect();
-      }
-      
-      console.log(`[${MODULE_DISPLAY}] Extension initialized`);
-    },
-    
-    onExit: () => {
-      disconnect();
+  eventSource.on(event_types.CHAT_CHANGED, () => {
+    if (getSettings().enabled && getSettings().channel === 'auto') {
+      connect();
+      refreshSettingsUI();
     }
   });
+
+  // Clean up on unload (best-effort)
+  window.addEventListener('beforeunload', () => disconnect());
 })();

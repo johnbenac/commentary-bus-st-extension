@@ -1,13 +1,14 @@
 {
   "display_name": "Commentary Bus",
   "author": "Johnny",
-  "version": "1.0.0",
-  "description": "Receive live commentary from external processes in your SillyTavern chats",
+  "version": "1.1.0",
+  "description": "Inject live commentary into chats from a local SSE bus.",
   "js": "index.js",
+  "css": "",
   "requires": [],
   "optional": [],
-  "loading_order": 10,
-  "auto_update": true,
+  "loading_order": 120,
+  "auto_update": false,
   "homePage": "https://github.com/johnbenac/commentary-bus-st-extension",
   "metadata": {
     "settings": {
