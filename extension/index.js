@@ -13,11 +13,11 @@
   const defaults = Object.freeze({
     enabled: true,
     serverUrl: 'http://127.0.0.1:5055',
+    bridgeUrl: 'http://127.0.0.1:5056',  // Claude Commentary Bridge API
     channel: 'default',      // or "auto"
     speaker: 'Commentator',
     logHeartbeats: false,
-    projectPath: '',         // project folder path
-    sessionFile: ''          // current session file being monitored
+    sessionDir: ''           // current session folder being monitored (project path)
   });
 
   /** @type {ReturnType<typeof SillyTavern.getContext>} */
@@ -75,8 +75,11 @@
               <span>Enable</span>
             </label>
 
-            <label for="cbus-server">Server URL:</label>
+            <label for="cbus-server">Commentary Bus URL:</label>
             <input id="cbus-server" class="text_pole" type="text" placeholder="http://127.0.0.1:5055" />
+
+            <label for="cbus-bridge">Bridge URL:</label>
+            <input id="cbus-bridge" class="text_pole" type="text" placeholder="http://127.0.0.1:5056" />
 
             <label for="cbus-channel">Channel:</label>
             <input id="cbus-channel" class="text_pole" type="text" placeholder="default or auto" />
@@ -91,14 +94,12 @@
             </label>
 
             <div style="margin-top: 10px; padding: 8px; border: 1px solid var(--SmartThemeBorderColor); border-radius: 4px;">
-              <label style="font-weight: bold; margin-bottom: 5px; display: block;">Project Folder:</label>
-              <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
-                <button id="cbus-choose-folder" class="menu_button" title="Choose project folder like VS Code">📁 Choose Folder</button>
-                <input id="cbus-project-path" class="text_pole" type="text" placeholder="/var/workstation/project-name" style="flex: 1;" readonly />
-              </div>
-              <div id="cbus-project-status" class="monospace" style="color:var(--SmartThemeBodyColor45); font-size: 0.9em;">
-                <div>Project: <span id="cbus-current-project">Not selected</span></div>
-                <div>Session: <span id="cbus-current-session">-</span></div>
+              <label style="font-weight: bold; margin-bottom: 5px; display: block;">Project Directory Path:</label>
+              <div style="margin-bottom: 8px;">
+                <input id="cbus-session-dir" class="text_pole" type="text" placeholder="Enter your Claude project directory" style="width: 100%;" />
+                <div style="font-size: 0.85em; color: var(--SmartThemeBodyColor45); margin-top: 4px;">
+                  Example: /var/workstation/assistants/commentator
+                </div>
               </div>
             </div>
 
@@ -148,6 +149,11 @@
       ctx.saveSettingsDebounced();
     });
 
+    $('#cbus-bridge').on('input', function () {
+      st.bridgeUrl = this.value.trim();
+      ctx.saveSettingsDebounced();
+    });
+
     $('#cbus-channel').on('input', function () {
       st.channel = this.value.trim();
       ctx.saveSettingsDebounced();
@@ -181,85 +187,51 @@
       setTimeout(connect, 100);
     });
 
-    $('#cbus-choose-folder').on('click', async () => {
-      try {
-        // Try modern File System Access API first
-        if ('showDirectoryPicker' in window) {
-          const dirHandle = await window.showDirectoryPicker();
-          const projectPath = dirHandle.name; // This gets just the folder name
-          // We'll need to reconstruct the full path or get it from user
-          $('#cbus-project-path').val(projectPath);
-          st.projectPath = projectPath;
-          ctx.saveSettingsDebounced();
-          await discoverAndMonitorProject(projectPath);
-        } else {
-          // Fallback: prompt for manual path entry
-          const path = prompt('Enter project folder path (e.g., /var/workstation/assistants/commentator):');
-          if (path) {
-            $('#cbus-project-path').val(path);
-            st.projectPath = path;
-            ctx.saveSettingsDebounced();
-            await discoverAndMonitorProject(path);
-          }
-        }
-      } catch (err) {
-        if (err.name !== 'AbortError') {
-          console.error('Folder picker error:', err);
-          toastr.error('Failed to select folder', TITLE);
-        }
-      }
-    });
-
-    $('#cbus-project-path').on('input', function () {
-      st.projectPath = this.value.trim();
-      ctx.saveSettingsDebounced();
-    });
-  }
-
-  // Project discovery and monitoring
-  async function discoverAndMonitorProject(projectPath) {
-    if (!projectPath) return;
-    
-    try {
+    $('#cbus-session-dir').on('input', async function () {
       const st = getSettings();
-      const response = await fetch(`${st.serverUrl.replace(/\/$/, '')}/monitor-project`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath })
-      });
+      const projectPath = this.value.trim();
+      st.sessionDir = projectPath;
+      ctx.saveSettingsDebounced();
       
-      if (response.ok) {
-        const result = await response.json();
-        st.sessionFile = result.sessionFile || '';
-        ctx.saveSettingsDebounced();
-        updateProjectStatus(projectPath, result.sessionFile);
-        toastr.success(`Now monitoring: ${result.projectName || projectPath}`, TITLE);
+      if (projectPath) {
+        try {
+          // Send project path to bridge for monitoring
+          const response = await fetch(`${st.bridgeUrl}/config/session-dir`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionDir: projectPath })
+          });
+          
+          if (response.ok) {
+            const result = await response.json();
+            toastr.success(`Now monitoring: ${projectPath.split('/').pop()}`, TITLE);
+            console.log(`[${TITLE}] Bridge switched to:`, result);
+          } else {
+            const error = await response.json();
+            toastr.error(`Bridge error: ${error.error}`, TITLE);
+            console.error(`[${TITLE}] Bridge error:`, error);
+          }
+        } catch (err) {
+          toastr.warning(`Project path saved, but bridge communication failed`, TITLE);
+          console.error(`[${TITLE}] Bridge communication error:`, err);
+        }
       } else {
-        toastr.error('Failed to start project monitoring', TITLE);
+        toastr.info('Project path cleared', TITLE);
       }
-    } catch (err) {
-      console.error('Project monitoring error:', err);
-      toastr.error('Error connecting to Bridge for project monitoring', TITLE);
-    }
+    });
   }
 
-  function updateProjectStatus(projectPath, sessionFile) {
-    const projectName = projectPath ? projectPath.split('/').pop() : 'Not selected';
-    const sessionName = sessionFile ? sessionFile.split('/').pop().substring(0, 8) + '...' : '-';
-    
-    $('#cbus-current-project').text(projectName);
-    $('#cbus-current-session').text(sessionName);
-  }
+  // Session file is now set directly via text input - no server discovery needed
 
   function refreshSettingsUI() {
     const st = getSettings();
     $('#cbus-enabled').prop('checked', !!st.enabled);
     $('#cbus-server').val(st.serverUrl);
+    $('#cbus-bridge').val(st.bridgeUrl);
     $('#cbus-channel').val(st.channel);
     $('#cbus-speaker').val(st.speaker);
     $('#cbus-log-heartbeats').prop('checked', !!st.logHeartbeats);
-    $('#cbus-project-path').val(st.projectPath || '');
-    updateProjectStatus(st.projectPath, st.sessionFile);
+    $('#cbus-session-dir').val(st.sessionDir || '');
     $('#cbus-active-channel').text(computeChannel());
     $('#cbus-last-url').text(lastUrl || '-');
   }
