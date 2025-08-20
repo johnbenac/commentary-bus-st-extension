@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
 import express from 'express';
+import cors from 'cors';
 
 // ==================== Config & Env ====================
 const BUS_URL     = process.env.BUS_URL      || 'http://127.0.0.1:5055';
@@ -351,6 +352,10 @@ function validateSessionPath(sessionPath) {
 function createBridgeAPI() {
   const app = express();
   app.use(express.json());
+  app.use(cors({
+    origin: '*',
+    credentials: false
+  }));
   
   // Get current session directory
   app.get('/config/session-dir', (req, res) => {
