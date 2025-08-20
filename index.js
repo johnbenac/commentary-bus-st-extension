@@ -16,7 +16,7 @@
     channel: 'default',      // or "auto"
     speaker: 'Commentator',
     logHeartbeats: false,
-    projectPath: '',         // project folder path
+    // removed projectPath - now using sessionFile directly
     sessionFile: ''          // current session file being monitored
   });
 
@@ -91,14 +91,12 @@
             </label>
 
             <div style="margin-top: 10px; padding: 8px; border: 1px solid var(--SmartThemeBorderColor); border-radius: 4px;">
-              <label style="font-weight: bold; margin-bottom: 5px; display: block;">Project Folder:</label>
-              <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
-                <input id="cbus-project-path" class="text_pole" type="text" placeholder="/var/workstation/assistants/commentator" style="flex: 1;" />
-                <button id="cbus-monitor-project" class="menu_button" title="Start monitoring this project folder">📁 Monitor</button>
-              </div>
-              <div id="cbus-project-status" class="monospace" style="color:var(--SmartThemeBodyColor45); font-size: 0.9em;">
-                <div>Project: <span id="cbus-current-project">Not selected</span></div>
-                <div>Session: <span id="cbus-current-session">-</span></div>
+              <label style="font-weight: bold; margin-bottom: 5px; display: block;">Session File Path:</label>
+              <div style="margin-bottom: 8px;">
+                <input id="cbus-session-file" class="text_pole" type="text" placeholder="Leave empty for auto-discovery" style="width: 100%;" />
+                <div style="font-size: 0.85em; color: var(--SmartThemeBodyColor45); margin-top: 4px;">
+                  Empty = auto-discovery | Full path example: /root/.claude/projects/my-project/session-id.jsonl
+                </div>
               </div>
             </div>
 
@@ -181,63 +179,20 @@
       setTimeout(connect, 100);
     });
 
-    $('#cbus-monitor-project').on('click', async () => {
+    $('#cbus-session-file').on('input', function () {
       const st = getSettings();
-      const projectPath = $('#cbus-project-path').val().trim();
-      
-      if (!projectPath) {
-        toastr.error('Please enter a project folder path', TITLE);
-        return;
-      }
-      
-      st.projectPath = projectPath;
+      st.sessionFile = this.value.trim();
       ctx.saveSettingsDebounced();
       
-      // Update UI locally - no server call needed for simple text input
-      updateProjectStatus(projectPath, '');
-      toastr.success(`Project set: ${projectPath.split('/').pop()}`, TITLE);
-    });
-
-    $('#cbus-project-path').on('input', function () {
-      st.projectPath = this.value.trim();
-      ctx.saveSettingsDebounced();
-    });
-  }
-
-  // Project discovery and monitoring
-  async function discoverAndMonitorProject(projectPath) {
-    if (!projectPath) return;
-    
-    try {
-      const st = getSettings();
-      const response = await fetch(`${st.serverUrl.replace(/\/$/, '')}/monitor-project`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath })
-      });
-      
-      if (response.ok) {
-        const result = await response.json();
-        st.sessionFile = result.sessionFile || '';
-        ctx.saveSettingsDebounced();
-        updateProjectStatus(projectPath, result.sessionFile);
-        toastr.success(`Now monitoring: ${result.projectName || projectPath}`, TITLE);
+      if (this.value.trim()) {
+        toastr.info(`Session file set: ${this.value.trim().split('/').pop()}`, TITLE);
       } else {
-        toastr.error('Failed to start project monitoring', TITLE);
+        toastr.info('Auto-discovery mode enabled', TITLE);
       }
-    } catch (err) {
-      console.error('Project monitoring error:', err);
-      toastr.error('Error connecting to Bridge for project monitoring', TITLE);
-    }
+    });
   }
 
-  function updateProjectStatus(projectPath, sessionFile) {
-    const projectName = projectPath ? projectPath.split('/').pop() : 'Not selected';
-    const sessionName = sessionFile ? sessionFile.split('/').pop().substring(0, 8) + '...' : '-';
-    
-    $('#cbus-current-project').text(projectName);
-    $('#cbus-current-session').text(sessionName);
-  }
+  // Session file is now set directly via text input - no server discovery needed
 
   function refreshSettingsUI() {
     const st = getSettings();
@@ -246,12 +201,9 @@
     $('#cbus-channel').val(st.channel);
     $('#cbus-speaker').val(st.speaker);
     $('#cbus-log-heartbeats').prop('checked', !!st.logHeartbeats);
-    $('#cbus-project-path').val(st.projectPath || '');
-    updateProjectStatus(st.projectPath, st.sessionFile);
+    $('#cbus-session-file').val(st.sessionFile || '');
     $('#cbus-active-channel').text(computeChannel());
     $('#cbus-last-url').text(lastUrl || '-');
-    
-    // No additional button setup needed for simple text input approach
   }
 
   // Remount when Extensions panel re-renders
