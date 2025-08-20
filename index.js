@@ -16,8 +16,8 @@
     channel: 'default',      // or "auto"
     speaker: 'Commentator',
     logHeartbeats: false,
-    // removed projectPath - now using sessionFile directly
-    sessionFile: ''          // current session file being monitored
+    // removed projectPath - now using sessionDir for folder monitoring
+    sessionDir: ''           // current session folder being monitored
   });
 
   /** @type {ReturnType<typeof SillyTavern.getContext>} */
@@ -91,11 +91,11 @@
             </label>
 
             <div style="margin-top: 10px; padding: 8px; border: 1px solid var(--SmartThemeBorderColor); border-radius: 4px;">
-              <label style="font-weight: bold; margin-bottom: 5px; display: block;">Session File Path:</label>
+              <label style="font-weight: bold; margin-bottom: 5px; display: block;">Session Folder Path:</label>
               <div style="margin-bottom: 8px;">
-                <input id="cbus-session-file" class="text_pole" type="text" placeholder="Leave empty for auto-discovery" style="width: 100%;" />
+                <input id="cbus-session-dir" class="text_pole" type="text" placeholder="Leave empty for auto-discovery" style="width: 100%;" />
                 <div style="font-size: 0.85em; color: var(--SmartThemeBodyColor45); margin-top: 4px;">
-                  Empty = auto-discovery | Full path example: /root/.claude/projects/my-project/session-id.jsonl
+                  Empty = auto-discovery | Folder example: /root/.claude/projects/my-project
                 </div>
               </div>
             </div>
@@ -179,13 +179,13 @@
       setTimeout(connect, 100);
     });
 
-    $('#cbus-session-file').on('input', function () {
+    $('#cbus-session-dir').on('input', function () {
       const st = getSettings();
-      st.sessionFile = this.value.trim();
+      st.sessionDir = this.value.trim();
       ctx.saveSettingsDebounced();
       
       if (this.value.trim()) {
-        toastr.info(`Session file set: ${this.value.trim().split('/').pop()}`, TITLE);
+        toastr.info(`Session folder set: ${this.value.trim().split('/').pop()}`, TITLE);
       } else {
         toastr.info('Auto-discovery mode enabled', TITLE);
       }
@@ -201,7 +201,7 @@
     $('#cbus-channel').val(st.channel);
     $('#cbus-speaker').val(st.speaker);
     $('#cbus-log-heartbeats').prop('checked', !!st.logHeartbeats);
-    $('#cbus-session-file').val(st.sessionFile || '');
+    $('#cbus-session-dir').val(st.sessionDir || '');
     $('#cbus-active-channel').text(computeChannel());
     $('#cbus-last-url').text(lastUrl || '-');
   }
