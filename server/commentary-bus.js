@@ -5,7 +5,7 @@ import cors from 'cors';
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 app.use(cors({
-  origin: ['http://127.0.0.1:8000', 'http://localhost:8000'],
+  origin: '*',
   credentials: false
 }));
 

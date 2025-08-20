@@ -1,6 +1,12 @@
 # Node
 node_modules/
 npm-debug.log*
+package-lock.json
+
+# Logs
+*.log
+logs/
+*.log.*
 
 # OS
 .DS_Store
@@ -11,11 +17,23 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+*~
 
 # Temp
 *.tmp
 *.temp
 .tmp/
 
-# Logs
-*.log
+# Runtime
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Environment
+.env
+.env.local
+
+# Server specific
+server/node_modules/
+server/*.log
