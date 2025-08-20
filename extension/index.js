@@ -295,6 +295,7 @@
           data.foo = "bar"; // Canary to verify this extension is running
           console.error(`[${TITLE}] CANARY TEST - Added canary:`, data);
           console.debug(`[${TITLE}] heartbeat`, data);
+          console.debug("canary says foobar");
         }
       });
 
