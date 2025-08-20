@@ -289,12 +289,12 @@
 
       es.addEventListener('heartbeat', (e) => {
         if (st.logHeartbeats) {
-          try { 
-            const data = JSON.parse(e.data);
-            data.foo = "bar"; // Canary to verify this extension is running
-            console.debug(`[${TITLE}] heartbeat`, data);
-          }
-          catch { console.debug(`[${TITLE}] heartbeat`, e.data); }
+          console.error(`[${TITLE}] CANARY TEST - About to parse heartbeat data:`, e.data);
+          const data = JSON.parse(e.data);
+          console.error(`[${TITLE}] CANARY TEST - Parsed data:`, data);
+          data.foo = "bar"; // Canary to verify this extension is running
+          console.error(`[${TITLE}] CANARY TEST - Added canary:`, data);
+          console.debug(`[${TITLE}] heartbeat`, data);
         }
       });
 
