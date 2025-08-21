@@ -290,21 +290,19 @@
       const mod = await import('/scripts/slash-commands.js');
       const run = mod.executeSlashCommandsWithOptions || mod.executeSlashCommands;
       
-      // Escape special characters for STscript
-      let escaped = String(text);
-      
-      // Replace in specific order to avoid double-escaping
-      escaped = escaped.replace(/\\/g, '\\\\');     // backslashes first
-      escaped = escaped.replace(/"/g, '\\"');       // quotes
-      escaped = escaped.replace(/\|/g, '\\|');       // pipes
-      escaped = escaped.replace(/\{\{/g, '\\{\\{');  // macro open
-      escaped = escaped.replace(/\}\}/g, '\\}\\}');  // macro close
-      escaped = escaped.replace(/\{:/g, '\\{:');     // closure open
-      escaped = escaped.replace(/:}/g, '\\:}');      // closure close
+      // minimal, ordered escapes for a quoted STscript string
+      let escaped = String(text)
+        .replace(/\\/g, '\\\\')   // backslashes
+        .replace(/"/g, '\\"')     // quotes
+        .replace(/\{\{/g, '\\{\\{')  // macro open
+        .replace(/\}\}/g, '\\}\\}')  // macro close
+        .replace(/\{:/g, '\\{:')     // closure open
+        .replace(/:}/g, '\\:}');     // closure close
+      // NOTE: no .replace(/\|/g, '\\|') here — STRICT_ESCAPING + quotes make it unnecessary
 
       const cmd =
-        `/parser-flag STRICT_ESCAPING on || ` +         // <= key line
-        `/sendas name="${name}" raw=true "${escaped}"`; // quoted text
+        `/parser-flag STRICT_ESCAPING on || ` +
+        `/sendas name="${name}" raw=false "${escaped}"`;
 
       await run(cmd);
     } catch (err) {
