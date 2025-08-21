@@ -11,9 +11,9 @@
   const UI_ROOT_ID = 'cbus-settings-root';
 
   const defaults = Object.freeze({
+    settingsSchemaVersion: 2,
     enabled: true,
-    serverUrl: 'http://127.0.0.1:5055',
-    bridgeUrl: 'http://127.0.0.1:5056',  // Claude Commentary Bridge API
+    serviceUrl: 'http://127.0.0.1:5055',
     channel: 'default',      // or "auto"
     speaker: 'Commentator',
     logHeartbeats: false,
@@ -28,6 +28,7 @@
   let es = null;           // EventSource handle
   let lastUrl = '';        // last connected URL (for logs)
   let mounted = false;     // settings drawer mounted?
+  let hasConfigApi = false; // service supports /config/session-dir?
 
   // --- Settings helpers ---
   function ensureSettings() {
@@ -48,6 +49,38 @@
   function getSettings() {
     ensureSettings();
     return ctx.extensionSettings[MODULE];
+  }
+
+  // --- Migration from v1 to v2 ---
+  function migrateSettingsIfNeeded() {
+    const st = getSettings();
+    if (!('settingsSchemaVersion' in st) || st.settingsSchemaVersion < 2) {
+      // Compute new serviceUrl from old settings
+      st.serviceUrl = st.serviceUrl || st.serverUrl || st.bridgeUrl || 'http://127.0.0.1:5055';
+      st.__migratedFromV1 = !!(st.serverUrl || st.bridgeUrl);
+      st.settingsSchemaVersion = 2;
+
+      // Stop saving legacy keys going forward
+      delete st.serverUrl;
+      delete st.bridgeUrl;
+
+      ctx.saveSettingsDebounced();
+      
+      // Show migration toast
+      try { 
+        toastr.info('Commentary Bus upgraded to unified service (v2.0)', TITLE); 
+      } catch {}
+    }
+  }
+
+  // --- Service capability detection ---
+  async function serviceSupportsConfigApi(base) {
+    try {
+      const r = await fetch(base.replace(/\/$/, '') + '/config/session-dir', { method: 'GET' });
+      return r.ok; // 200 with JSON {sessionDir,...}
+    } catch { 
+      return false; 
+    }
   }
 
   // --- Channel helper (auto = per group/char) ---
@@ -75,11 +108,8 @@
               <span>Enable</span>
             </label>
 
-            <label for="cbus-server">Commentary Bus URL:</label>
-            <input id="cbus-server" class="text_pole" type="text" placeholder="http://127.0.0.1:5055" />
-
-            <label for="cbus-bridge">Bridge URL:</label>
-            <input id="cbus-bridge" class="text_pole" type="text" placeholder="http://127.0.0.1:5056" />
+            <label for="cbus-service">Service URL:</label>
+            <input id="cbus-service" class="text_pole" type="text" placeholder="http://127.0.0.1:5055" />
 
             <label for="cbus-channel">Channel:</label>
             <input id="cbus-channel" class="text_pole" type="text" placeholder="default or auto" />
@@ -144,13 +174,8 @@
       else disconnect();
     });
 
-    $('#cbus-server').on('input', function () {
-      st.serverUrl = this.value.trim();
-      ctx.saveSettingsDebounced();
-    });
-
-    $('#cbus-bridge').on('input', function () {
-      st.bridgeUrl = this.value.trim();
+    $('#cbus-service').on('input', function () {
+      st.serviceUrl = this.value.trim();
       ctx.saveSettingsDebounced();
     });
 
@@ -173,12 +198,12 @@
 
     $('#cbus-test').on('click', async () => {
       try {
-        const res = await fetch(st.serverUrl.replace(/\/$/, '') + '/status');
+        const res = await fetch(st.serviceUrl.replace(/\/$/, '') + '/status');
         const data = await res.json();
-        toastr.success(`Bus OK · clients: ${data.clientsTotal ?? data.clients ?? 'n/a'}`, TITLE);
+        toastr.success(`Service OK · clients: ${data.clientsTotal ?? data.clients ?? 'n/a'}`, TITLE);
       } catch (e) {
-        console.error(e);
-        toastr.error('Failed to reach Commentary Bus', TITLE);
+        console.error(`[${TITLE}] Failed to reach /status`, e);
+        toastr.error('Service error', TITLE);
       }
     });
 
@@ -194,9 +219,15 @@
       ctx.saveSettingsDebounced();
       
       if (projectPath) {
+        // Check if service supports config API
+        if (!hasConfigApi) {
+          toastr.info('Your service does not support project path configuration. Upgrade the backend to use this feature.', TITLE);
+          return;
+        }
+        
         try {
-          // Send project path to bridge for monitoring
-          const response = await fetch(`${st.bridgeUrl}/config/session-dir`, {
+          // Send project path to unified service for monitoring
+          const response = await fetch(`${st.serviceUrl.replace(/\/$/, '')}/config/session-dir`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sessionDir: projectPath })
@@ -205,15 +236,15 @@
           if (response.ok) {
             const result = await response.json();
             toastr.success(`Now monitoring: ${projectPath.split('/').pop()}`, TITLE);
-            console.log(`[${TITLE}] Bridge switched to:`, result);
+            console.log(`[${TITLE}] Service switched to:`, result);
           } else {
             const error = await response.json();
-            toastr.error(`Bridge error: ${error.error}`, TITLE);
-            console.error(`[${TITLE}] Bridge error:`, error);
+            toastr.error(`Service error: ${error.error}`, TITLE);
+            console.error(`[${TITLE}] Service error:`, error);
           }
         } catch (err) {
-          toastr.warning(`Project path saved, but bridge communication failed`, TITLE);
-          console.error(`[${TITLE}] Bridge communication error:`, err);
+          toastr.warning(`Project path saved, but service communication failed`, TITLE);
+          console.error(`[${TITLE}] Service communication error:`, err);
         }
       } else {
         toastr.info('Project path cleared', TITLE);
@@ -226,8 +257,7 @@
   function refreshSettingsUI() {
     const st = getSettings();
     $('#cbus-enabled').prop('checked', !!st.enabled);
-    $('#cbus-server').val(st.serverUrl);
-    $('#cbus-bridge').val(st.bridgeUrl);
+    $('#cbus-service').val(st.serviceUrl);
     $('#cbus-channel').val(st.channel);
     $('#cbus-speaker').val(st.speaker);
     $('#cbus-log-heartbeats').prop('checked', !!st.logHeartbeats);
@@ -275,7 +305,7 @@
     disconnect();
 
     const channel = computeChannel();
-    const url = `${st.serverUrl.replace(/\/$/, '')}/events?channel=${encodeURIComponent(channel)}`;
+    const url = `${st.serviceUrl.replace(/\/$/, '')}/events?channel=${encodeURIComponent(channel)}`;
     lastUrl = url;
     refreshSettingsUI();
 
@@ -328,9 +358,25 @@
   // --- Lifecycle hooks ---
   ensureSettings();
   // connect at app ready, and on chat/group switch if using auto channel
-  eventSource.on(event_types.APP_READY, () => {
+  eventSource.on(event_types.APP_READY, async () => {
+    // Migrate settings from v1 to v2 if needed
+    migrateSettingsIfNeeded();
+    
     mountSettings();
-    if (getSettings().enabled) connect();
+    
+    // Check service capabilities
+    const st = getSettings();
+    hasConfigApi = await serviceSupportsConfigApi(st.serviceUrl);
+    
+    // If legacy service, show notice and disable project path input
+    if (!hasConfigApi) {
+      $('#cbus-session-dir').prop('disabled', true);
+      try { 
+        toastr.warning('Service is pre-2.0 (no project path support). SSE will still work. Consider upgrading the backend.', TITLE); 
+      } catch {}
+    }
+    
+    if (st.enabled) connect();
   });
 
   eventSource.on(event_types.CHAT_CHANGED, () => {

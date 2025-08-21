@@ -1,0 +1,46 @@
+# Claude Commentary Bridge Configuration
+
+enabled: true
+
+# Channel mapping
+channels:
+  default: "claude-meta"
+  assistants: "claude-assistants"
+  workstation: "claude-workstation" 
+  ops: "claude-ops"
+
+# Event filtering
+filters:
+  # Types of events to include
+  include_types:
+    - "assistant"          # AI responses
+    - "tool_call"         # Tool executions
+    - "git_action"        # Git operations
+    - "file_operation"    # File create/edit/delete
+    - "session_start"     # New chat sessions
+    - "session_end"       # Chat sessions ending
+    - "command"           # Shell commands
+    - "error"             # Errors and warnings
+
+  # Regex patterns to exclude (case insensitive)
+  exclude_patterns:
+    - ".*heartbeat.*"
+    - ".*ping.*"
+    - ".*health.*check.*"
+    - ".*status.*poll.*"
+
+  # Minimum message length to send
+  min_message_length: 10
+
+# Rate limiting (per channel)
+rate_limit:
+  messages_per_minute: 10
+  burst_limit: 20
+
+# Working directory to channel mapping
+directory_patterns:
+  "/var/workstation/assistants/": "claude-assistants"
+  "/var/workstation/": "claude-workstation"
+  "/opt/": "claude-ops"
+  "/srv/": "claude-ops"
+  "/home/johnb/sd/": "claude-ai-art"

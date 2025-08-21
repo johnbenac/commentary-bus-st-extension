@@ -1,8 +1,8 @@
 {
   "display_name": "Commentary Bus",
   "author": "Johnny",
-  "version": "1.1.0",
-  "description": "Inject live commentary into chats from a local SSE bus.",
+  "version": "2.0.0",
+  "description": "Inject live commentary into chats from the unified Commentary Service.",
   "js": "extension/index.js",
   "css": "",
   "requires": [],
@@ -12,8 +12,9 @@
   "homePage": "https://github.com/johnbenac/commentary-bus-st-extension",
   "metadata": {
     "settings": {
+      "settingsSchemaVersion": 2,
       "enabled": true,
-      "serverUrl": "http://127.0.0.1:5055",
+      "serviceUrl": "http://127.0.0.1:5055",
       "channel": "default",
       "speaker": "Commentator",
       "logHeartbeats": false
