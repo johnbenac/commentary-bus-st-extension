@@ -84,11 +84,12 @@ function writeSSE(res, { event, data, id }) {
 function broadcast(channel, event, payload) {
   const id = nextId++;
   // buffer for late joiners
-  const buf = buffersByChannel.get(channel);
+  const normalizedChannel = getChannel(channel);
+  const buf = buffersByChannel.get(normalizedChannel);
   buf.push({ id, data: payload });
   if (buf.length > MAX_BUFFER) buf.shift();
 
-  const set = clientsByChannel.get(channel);
+  const set = clientsByChannel.get(normalizedChannel);
   for (const res of set) {
     writeSSE(res, { event, data: payload, id });
   }
@@ -143,45 +144,67 @@ function shouldSend(event) {
   return true;
 }
 
-// Format messages for display
-function formatMessage(event) {
-  const { ts, event: eventType, error } = event;
-  
-  switch (eventType) {
-    case 'tool_call': {
-      const { tool = {}, error } = event;
-      if (error) return `❌ Tool error: ${error}`;
-      
-      switch (tool.name) {
-        case 'Bash':
-          return tool.parameters?.description || 
-                 `${tool.parameters?.command || 'bash command'} → ${tool.parameters?.description || 'Running command'}`;
-        
-        case 'Write':
-        case 'Edit':
-          const fp = tool.parameters?.file_path || tool.parameters?.path || 'file';
-          const size = tool.parameters?.content?.length || 0;
-          return `Writing ${fp} (${size} bytes): ${tool.parameters?.description || 'File operation'}`;
-        
-        case 'Read':
-          return `Reading ${tool.parameters?.file_path || 'file'}: ${tool.parameters?.description || 'File read'}`;
-        
-        default:
-          return tool.parameters?.description || `${tool.name}: ${JSON.stringify(tool.parameters || {})}`;
-      }
+// Helper function from working bridge
+function truncate(s, n = 3000) { return !s ? '' : (s.length <= n ? s : s.slice(0, n) + '...'); }
+
+// Format tool messages - copied from working bridge
+function formatToolMessage(event) {
+  const toolName = event.tool_name;
+  if (!toolName) return `🔧 Tool executed`;
+  let toolInput = {};
+  if (event.message?.content) {
+    for (const c of event.message.content) {
+      if (c.type === 'tool_use' && c.name === toolName) { toolInput = c.input || {}; break; }
     }
-    
-    case 'user':
-      return event.text || event.message || JSON.stringify(event.content || event);
-    
-    case 'assistant':
-      return (event.text || event.message || JSON.stringify(event.content || event)).substring(0, 500);
-    
+  }
+  switch (toolName) {
+    case 'Bash':  return `${toolInput.command || ''} → ${toolInput.description || ''}`;
+    case 'Write': {
+      const p = toolInput.file_path || ''; const content = toolInput.content || '';
+      return `Writing ${p} (${content.length}B): ${truncate(content, 2000)}`;
+    }
+    case 'Read':  return `Reading ${toolInput.file_path || ''}${toolInput.limit ? ` (${toolInput.limit} lines)` : ''}: ${toolInput.description || ''}`;
+    case 'Edit':  return `Editing ${toolInput.file_path || ''}: "${truncate(toolInput.old_string || '', 500)}" → "${truncate(toolInput.new_string || '', 500)}"`;
+    case 'MultiEdit': {
+      const p = toolInput.file_path || ''; const editsCount = toolInput.edits?.length || 0;
+      const details = toolInput.edits?.slice(0,2).map(e => `"${truncate(e.old_string,100)}" → "${truncate(e.new_string,100)}"`).join('; ') || '';
+      return `MultiEdit ${p}: ${editsCount} changes - ${details}`;
+    }
+    case 'Glob':  return `Searching files: "${toolInput.pattern || ''}" in ${toolInput.path || '.'}`;
+    case 'Grep': {
+      const opts = [];
+      if (toolInput['-i']) opts.push('case insensitive');
+      if (toolInput.glob) opts.push(`glob: ${toolInput.glob}`);
+      return `Searching "${toolInput.pattern || ''}" in ${toolInput.path || '.'}${opts.length ? ` (${opts.join(', ')})` : ''}`;
+    }
+    case 'TodoWrite': {
+      const n = toolInput.todos?.length || 0;
+      const d = toolInput.todos?.slice(0,2).map(t => `${t.status}: "${truncate(t.content, 100)}"`).join('; ') || '';
+      return `${n} todos updated → ${d}${n>2?` (and ${n-2} more)`:''}`;
+    }
+    case 'LS':    return `Listing ${toolInput.path || ''}${toolInput.ignore ? ` (ignoring: ${toolInput.ignore.join(', ')})` : ''}`;
+    default:      return `${toolName}: ${toolInput.description || ''}`;
+  }
+}
+
+// Format messages for display - simplified to match working bridge
+function formatMessage(event) {
+  switch (event.type) {
+    case 'user': {
+      const s = truncate(event.message?.content || '', 2500);
+      return `${s}`;
+    }
+    case 'assistant': {
+      if (event.tool_name) return formatToolMessage(event);
+      const txt = event.message?.content?.[0]?.text || '';
+      return `${truncate(txt, 2500)}`;
+    }
+    case 'tool_call':
+      return formatToolMessage(event);
     case 'session_start':
       return `🚀 New Claude session started`;
-    
     default:
-      return event.text || event.message || JSON.stringify(event);
+      return `Activity`;
   }
 }
 
@@ -215,7 +238,8 @@ function checkRateLimit(channel) {
 async function processMessage(event, sessionFile) {
   if (!shouldSend(event)) return;
 
-  const channel = config.channels[event.channel] || config.channels.default || 'claude-meta';
+  // Always use 'default' channel so clients can connect easily
+  const channel = event.channel || 'default';
   
   if (!checkRateLimit(channel)) {
     console.log(`⏳ Rate limited: ${channel}`);
@@ -234,6 +258,7 @@ async function processMessage(event, sessionFile) {
 
   // Broadcast via SSE
   broadcast(channel, 'chat', payload);
+  // console.log('📣 broadcast', { channel, type: payload.type });
 }
 
 // Message ordering buffer
@@ -263,20 +288,28 @@ function queueMessage(msg, sessionFile) {
 function tailFile(filepath) {
   if (tails.has(filepath)) return;
 
-  const tail = new TailFile(filepath, { encoding: 'utf8' });
+  // Start from end, emit one 'line' per newline (per tail-file docs)
+  const tail = new TailFile(filepath, { encoding: 'utf8', startPos: 'end' });
   tails.set(filepath, tail);
 
   console.log(`👂 Tail started: ${filepath}`);
 
-  tail.on('data', chunk => {
-    const lines = chunk.trim().split('\n').filter(Boolean);
-    for (const line of lines) {
-      try {
-        const msg = JSON.parse(line);
-        queueMessage(msg, filepath);
-      } catch (e) {
-        console.error(`❌ Parse error in ${filepath}:`, e.message);
+  tail.on('line', (line) => {
+    try {
+      const msg = JSON.parse(line);
+      // Detect tool usage in assistant messages
+      if (msg.type === 'assistant' && msg.message?.content) {
+        for (const c of msg.message.content) {
+          if (c.type === 'tool_use') {
+            msg.tool_name = c.name;
+            msg.tool_input = c.input;
+            break;
+          }
+        }
       }
+      queueMessage(msg, filepath);
+    } catch (e) {
+      console.error(`❌ Parse error in ${filepath}:`, e.message);
     }
   });
 
@@ -293,7 +326,11 @@ function tailFile(filepath) {
     console.log(`🔄 File moved: ${oldPath} → ${newPath}`);
   });
 
-  tail.start();
+  // Promise-returning start helps surface startup errors
+  tail.startP().catch(err => {
+    console.error(`💥 failed to start tail [${filepath}]: ${err.message}`);
+    tails.delete(filepath);
+  });
 }
 
 function untailFile(filepath) {
@@ -406,7 +443,10 @@ app.get('/events', (req, res) => {
 
 // Message ingestion endpoint
 app.post('/ingest', (req, res) => {
-  if (AUTH_TOKEN && req.headers.authorization !== `Bearer ${AUTH_TOKEN}`) {
+  // Backward compat: accept either Authorization: Bearer or X-Auth-Token
+  const bearerOk = req.headers.authorization === `Bearer ${AUTH_TOKEN}`;
+  const headerOk = req.get('X-Auth-Token') === AUTH_TOKEN;
+  if (AUTH_TOKEN && !(bearerOk || headerOk)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
