@@ -289,8 +289,20 @@
     try {
       const mod = await import('/scripts/slash-commands.js');
       const run = mod.executeSlashCommandsWithOptions || mod.executeSlashCommands;
-      // preserve quotes reliably with raw=true (supported in recent STscript updates)
-      const cmd = `/sendas name="${name}" raw=true ${text}`;
+      
+      // Escape only what matters inside quoted STscript strings
+      const escaped = String(text)
+        .replace(/\\/g, '\\\\')   // backslashes first
+        .replace(/"/g, '\\"')     // quotes
+        // avoid macro/closure surprises if these appear in logs:
+        .replace(/\{\{/g, '\\{\\{')   // macros: {{...}}
+        .replace(/\{\:/g, '\\{:')     // closures: {:
+        .replace(/\:\}/g, '\\:}');    // closures: :}
+
+      const cmd =
+        `/parser-flag STRICT_ESCAPING on || ` +         // <= key line
+        `/sendas name="${name}" raw=true "${escaped}"`; // quoted text
+
       await run(cmd);
     } catch (err) {
       console.error(`[${TITLE}] /sendas failed`, err);
