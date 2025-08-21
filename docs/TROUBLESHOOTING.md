@@ -102,6 +102,20 @@
    - Check for JavaScript errors on load
    - Look for "Failed to load extension"
 
+### Messages Truncated at Special Characters
+
+**Fixed in v2.0.1** - If using an older version, update the extension.
+
+**Symptoms:**
+- Messages cut off at pipe character (|)
+- Regex patterns incomplete
+- Search queries truncated
+
+**Solution:**
+- Update to latest version of Commentary Bus
+- Extension now properly escapes special characters
+- Uses STscript STRICT_ESCAPING mode for proper handling
+
 ## Diagnostic Commands
 
 ### Check Unified Service Health

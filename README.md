@@ -129,6 +129,12 @@ SillyTavern Extension → Unified Commentary Service → SillyTavern Chat
 - **User-friendly paths** - Enter `/var/workstation/my-project/` instead of cryptic Claude session paths
 - **Automatic path transformation** - Bridge converts to Claude's internal format transparently
 
+### Message Formatting & Special Characters (v2.0.1)
+- **Fixed pipe character truncation** - Messages with `|` characters now display completely
+- **Proper escaping** - All regex patterns and special characters work correctly
+- **Clean output** - No unnecessary quotes around messages
+- **STscript compliance** - Uses STRICT_ESCAPING mode for robust handling
+
 ## 📖 Documentation
 
 - **[Bridge Documentation](claude-commentary-bridge/README.md)** - Claude Code monitoring setup
