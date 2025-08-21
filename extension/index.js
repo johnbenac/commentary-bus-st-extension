@@ -290,14 +290,17 @@
       const mod = await import('/scripts/slash-commands.js');
       const run = mod.executeSlashCommandsWithOptions || mod.executeSlashCommands;
       
-      // Escape only what matters inside quoted STscript strings
-      const escaped = String(text)
-        .replace(/\\/g, '\\\\')   // backslashes first
-        .replace(/"/g, '\\"')     // quotes
-        // avoid macro/closure surprises if these appear in logs:
-        .replace(/\{\{/g, '\\{\\{')   // macros: {{...}}
-        .replace(/\{\:/g, '\\{:')     // closures: {:
-        .replace(/\:\}/g, '\\:}');    // closures: :}
+      // Escape special characters for STscript
+      let escaped = String(text);
+      
+      // Replace in specific order to avoid double-escaping
+      escaped = escaped.replace(/\\/g, '\\\\');     // backslashes first
+      escaped = escaped.replace(/"/g, '\\"');       // quotes
+      escaped = escaped.replace(/\|/g, '\\|');       // pipes
+      escaped = escaped.replace(/\{\{/g, '\\{\\{');  // macro open
+      escaped = escaped.replace(/\}\}/g, '\\}\\}');  // macro close
+      escaped = escaped.replace(/\{:/g, '\\{:');     // closure open
+      escaped = escaped.replace(/:}/g, '\\:}');      // closure close
 
       const cmd =
         `/parser-flag STRICT_ESCAPING on || ` +         // <= key line
