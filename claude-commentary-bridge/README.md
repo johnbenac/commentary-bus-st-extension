@@ -16,18 +16,26 @@ The Claude Commentary Bridge is a Node.js service that monitors Claude Code sess
 ## 🏗️ Architecture
 
 ```
-Claude Session Files → chokidar (folder watch) → tail-file (per session) → Commentary Bus → SillyTavern
-     *.jsonl              ↓                           ↓                       ↓
-                    File Discovery              Message Parsing         SSE Broadcast
-                    + Lifecycle                + Formatting            + Channel Routing
+SillyTavern Extension
+      ↓ HTTP API (5056)
+      ↓ Configure project path
+Claude Commentary Bridge
+      ↓ Monitor folder
+Claude Session Files → chokidar → tail-file → Commentary Bus → SillyTavern Chat
+     *.jsonl            ↓            ↓              ↓ (5055)        ↓ SSE
+                 File Discovery   Message      Channel Routing   Chat Injection
+                 + Lifecycle      Parsing      + Broadcasting    + /sendas
 ```
 
 ### How It Works
 
-1. **Folder Watching**: Uses `chokidar` to monitor a Claude project folder for `*.jsonl` files
-2. **Dynamic Tailing**: Automatically starts `tail-file` instances for each discovered session
-3. **Message Processing**: Parses JSONL events, filters, formats, and forwards to Commentary Bus
-4. **Multi-Session Coordination**: Orders messages across concurrent sessions using timestamps
+1. **Configuration**: SillyTavern extension sends project path to bridge API (port 5056)
+2. **Path Transform**: Bridge converts user path to Claude's format automatically
+3. **Folder Watching**: Uses `chokidar` to monitor the Claude project folder for `*.jsonl` files
+4. **Dynamic Tailing**: Automatically starts `tail-file` instances for each discovered session
+5. **Message Processing**: Parses JSONL events, filters, formats, and forwards to Commentary Bus
+6. **Broadcasting**: Commentary Bus streams messages via SSE to connected SillyTavern clients
+7. **Chat Injection**: Extension injects messages as commentary in active chats
 
 ## 📦 Installation
 
@@ -38,44 +46,77 @@ npm install
 
 ## 🚀 Usage
 
-### Environment Variables
+### Starting the Bridge
+
+```bash
+cd /var/workstation/assistants/commentator/claude-commentary-bridge
+node bridge.js
+```
+
+The bridge starts with a default monitoring directory but is designed to be configured dynamically from SillyTavern.
+
+### HTTP API (Port 5056)
+
+The bridge exposes an HTTP API for dynamic configuration:
+
+**Update Session Directory:**
+```bash
+POST http://127.0.0.1:5056/config/session-dir
+Content-Type: application/json
+
+{
+  "sessionDir": "/var/workstation/my-project"
+}
+```
+
+The API automatically transforms regular paths to Claude's format:
+- `/var/workstation/my-project` → `/root/.claude/projects/-var-workstation-my-project`
+
+### Environment Variables (Optional)
 
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
-| `SESSION_DIR` | **Required** - Claude project folder to monitor | None | `/root/.claude/projects/my-project` |
+| `SESSION_DIR` | Initial project folder (optional - can be set via API) | `/root/.claude/projects/-var-workstation-assistants-commentator` | `/root/.claude/projects/my-project` |
 | `BUS_URL` | Commentary Bus server URL | `http://127.0.0.1:5055` | `http://localhost:3000` |
 | `CBUS_TOKEN` | Optional auth token for Commentary Bus | None | `secret123` |
 | `CONFIG_FILE` | YAML configuration file path | `./filters.yaml` | `/path/to/custom.yaml` |
 
 ### Basic Usage
 
-**Start monitoring a Claude project folder:**
+**Start the bridge service:**
 ```bash
-SESSION_DIR="/root/.claude/projects/-var-workstation-assistants-commentator" node bridge.js
+node bridge.js
+# or in background:
+nohup node bridge.js > bridge.log 2>&1 &
 ```
 
-**Background service with logging:**
-```bash
-SESSION_DIR="/root/.claude/projects/my-project" nohup node bridge.js > bridge.log 2>&1 &
-```
+**Configure from SillyTavern:**
+1. In SillyTavern's Extensions panel, find "Commentary Bus"
+2. Enter your project path in "Project Directory Path" field
+3. Example: `/var/workstation/assistants/commentator`
+4. The bridge automatically transforms this to Claude's format
 
-### Finding Your Project Folder
+### Dynamic Project Switching
 
-Claude creates project folders using this pattern:
-```
-Project Path: /var/workstation/my-project/
-Claude Folder: /root/.claude/projects/-var-workstation-my-project/
-```
+Change the monitored project at any time from SillyTavern without restarting the bridge:
 
-The transformation: `/` becomes `-`, leading `/` removed.
+1. Enter a new project path in SillyTavern
+2. Bridge receives the update via API
+3. Automatically stops monitoring old project
+4. Starts monitoring new project
+5. All Claude activity from the new project streams to SillyTavern
 
-**To find your current project folder:**
-```bash
-# From within your Claude project directory
-pwd                    # Shows: /var/workstation/assistants/commentator
-basename $(pwd)        # Shows: commentator
-# Your SESSION_DIR: /root/.claude/projects/-var-workstation-assistants-commentator
-```
+### Path Transformation
+
+The bridge handles Claude's path format automatically:
+
+| User Enters | Bridge Monitors |
+|-------------|----------------|
+| `/var/workstation/my-project` | `/root/.claude/projects/-var-workstation-my-project` |
+| `/opt/tools/assistant` | `/root/.claude/projects/-opt-tools-assistant` |
+| `/home/user/code` | `/root/.claude/projects/-home-user-code` |
+
+Transformation rules: Leading `/` removed, remaining `/` become `-`
 
 ## ⚙️ Configuration
 
@@ -106,6 +147,46 @@ ordering:
 - **10 messages per minute** per channel
 - **Burst capacity**: 20 messages  
 - Token bucket algorithm with 6-second refill interval
+
+## 🌐 HTTP API Reference
+
+The bridge exposes an HTTP API on port 5056 for dynamic configuration:
+
+### Endpoints
+
+#### `POST /config/session-dir`
+Update the monitored session directory dynamically.
+
+**Request:**
+```json
+{
+  "sessionDir": "/var/workstation/my-project"
+}
+```
+
+**Success Response (200):**
+```json
+{
+  "success": true,
+  "sessionDir": "/root/.claude/projects/-var-workstation-my-project",
+  "inputPath": "/var/workstation/my-project"
+}
+```
+
+**Error Response (400):**
+```json
+{
+  "error": "Session directory not found: /root/.claude/projects/-invalid-path",
+  "inputPath": "/invalid/path",
+  "transformedPath": "/root/.claude/projects/-invalid-path"
+}
+```
+
+### CORS Support
+
+The API includes CORS headers for browser-based access from SillyTavern:
+- `Access-Control-Allow-Origin: *`
+- Supports preflight requests for cross-origin communication
 
 ## 🔄 Multi-Session Support
 
@@ -148,29 +229,40 @@ I'll help you implement OAuth2 authentication. Let me create a complete setup...
 
 ### Common Issues
 
-**Bridge won't start:**
+**Bridge API not accessible from SillyTavern:**
 ```bash
-❌ SESSION_DIR is required (env or argv[2])
+[Commentary Bus] Bridge error: Failed to fetch
 ```
-**Solution**: Provide the `SESSION_DIR` environment variable
+**Solution**: Ensure bridge is running and listening on port 5056
 
-**Folder not found:**
-```bash
-❌ Not a directory: /path/to/nonexistent
+**Invalid project path:**
+```javascript
+{
+  "error": "Session directory not found: /root/.claude/projects/-invalid-path"
+}
 ```
-**Solution**: Verify the Claude project folder exists and is readable
+**Solution**: 
+- Verify the project directory exists
+- Make sure you're entering the actual project path (e.g., `/var/workstation/my-project`)
+- The bridge will handle the transformation to Claude's format
 
-**No session files:**
+**No session files after setting directory:**
 ```bash
 ⚠️  No .jsonl session files found in /path/folder (watching for new ones)
 ```
-**Status**: Normal - bridge will detect new sessions as they're created
+**Status**: Normal - bridge will detect new sessions as Claude creates them
 
 **Commentary Bus unreachable:**
 ```bash
 ❌ Bus unreachable: status 500
 ```
-**Solution**: Ensure Commentary Bus server is running on the specified URL
+**Solution**: Ensure Commentary Bus server is running on port 5055
+
+**CORS errors in browser console:**
+```
+Access to fetch at 'http://127.0.0.1:5056/config/session-dir' from origin 'http://localhost:8000' has been blocked by CORS policy
+```
+**Solution**: Update bridge to latest version which includes CORS support
 
 ### Debug Output
 

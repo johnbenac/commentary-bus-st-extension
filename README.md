@@ -53,10 +53,9 @@ Server runs on http://127.0.0.1:5055
 ```bash
 cd claude-commentary-bridge/
 npm install
-
-# Set your Claude project folder and start monitoring
-SESSION_DIR="/var/workstation/my-project" node bridge.js
+node bridge.js
 ```
+The bridge starts on port 5056 with HTTP API for dynamic configuration.
 
 ### 3. Install Extension in SillyTavern
 1. Go to Extensions → Install Extension
@@ -68,6 +67,8 @@ SESSION_DIR="/var/workstation/my-project" node bridge.js
 1. In Extensions panel, find "Commentary Bus"
 2. Set **Project Directory Path** to your Claude project folder
 3. Example: `/var/workstation/assistants/commentator`
+4. The bridge will automatically transform this to Claude's internal format
+5. Bridge URL should be: `http://127.0.0.1:5056`
 
 ### 5. Add Commentator to Group
 Create a character named "Commentator" and add to your group chat
@@ -89,24 +90,23 @@ curl -X POST http://127.0.0.1:5055/ingest \
 
 ### Complete System Flow
 ```
-Claude Code Activity → Bridge Processing → Commentary Bus → SillyTavern Chat
-     *.jsonl              ↓                    ↓                ↓
-                    Message Parsing      SSE Broadcast    Chat Injection
-                    + Formatting         + Channel        + Character
-                                          Routing           Display
+SillyTavern Extension → Bridge API → Claude Commentary Bridge → Commentary Bus → SillyTavern Chat
+    Config UI            HTTP 5056      Monitor Folder         SSE 5055         Chat Display
+        ↓                    ↓               ↓                     ↓                  ↓
+   Set Project Path    Transform Path   Parse Messages      Broadcast Events    Inject as /sendas
 ```
 
 ### Component Integration
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  Claude Code    │ -> │ Commentary Bridge│ -> │ Commentary Bus  │
-│  Session Files  │    │ (folder monitor) │    │ (SSE server)    │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                                         ↓
-                       ┌─────────────────┐    ┌─────────────────┐
-                       │ SillyTavern     │ <- │ ST Extension    │
-                       │ Chat Interface  │    │ (SSE client)    │
-                       └─────────────────┘    └─────────────────┘
+┌─────────────────┐         ┌──────────────────┐    ┌─────────────────┐
+│ SillyTavern     │ ------> │ Commentary Bridge│ -> │ Commentary Bus  │
+│ Extension UI    │  HTTP   │ (folder monitor) │    │ (SSE server)    │
+│                 │  5056   │ + HTTP API       │    │ Port 5055       │
+└─────────────────┘         └──────────────────┘    └─────────────────┘
+        ↑                            ↓                        ↓
+        │                     Claude Session             SSE Stream
+        │                     Files (*.jsonl)                ↓
+        └────────────────────────────────────────────────────┘
 ```
 
 ## 🌟 What's New in v2.0
@@ -118,10 +118,12 @@ Claude Code Activity → Bridge Processing → Commentary Bus → SillyTavern Ch
 - **Clean architecture** - No fallbacks or complex auto-discovery, just reliable folder monitoring
 - **Path transformation shim** - Enter intuitive project paths, bridge handles Claude's internal format
 
-### Dynamic Configuration
-- **HTTP API** - Runtime configuration changes via REST endpoints
-- **No restarts needed** - Switch monitored folders on-the-fly
+### Dynamic Configuration from SillyTavern
+- **UI-based configuration** - Set project paths directly in SillyTavern's extension panel
+- **HTTP API** - Bridge exposes API on port 5056 for runtime configuration
+- **No restarts needed** - Switch monitored folders instantly from SillyTavern
 - **User-friendly paths** - Enter `/var/workstation/my-project/` instead of cryptic Claude session paths
+- **Automatic path transformation** - Bridge converts to Claude's internal format transparently
 
 ## 📖 Documentation
 
