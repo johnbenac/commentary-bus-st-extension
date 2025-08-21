@@ -1,6 +1,8 @@
 # API Reference 🔌
 
-## Server Endpoints
+## Unified Service Endpoints (Port 5055)
+
+The unified service combines all functionality on a single port.
 
 ### POST `/ingest`
 
@@ -138,6 +140,46 @@ Occurs when:
 ### CORS
 
 The server accepts requests from any origin (`*`). For production use, you may want to restrict this in the server configuration.
+
+### GET `/config/session-dir`
+
+Get the current monitored directory configuration.
+
+**Response:**
+```json
+{
+  "sessionDir": "/var/workstation/assistants/commentator",
+  "isActive": true,
+  "activeTails": 2
+}
+```
+
+### POST `/config/session-dir`
+
+Update the monitored directory dynamically (no restart needed).
+
+**Request Body:**
+```json
+{
+  "sessionDir": "/var/workstation/my-project"
+}
+```
+
+**Response:**
+```json
+{
+  "sessionDir": "/var/workstation/my-project",
+  "transformed": "/root/.claude/projects/-var-workstation-my-project",
+  "watchStarted": true
+}
+```
+
+**Example:**
+```bash
+curl -X POST http://127.0.0.1:5055/config/session-dir \
+  -H 'Content-Type: application/json' \
+  -d '{"sessionDir": "/var/workstation/assistants/commentator"}'
+```
 
 ## Client Libraries
 

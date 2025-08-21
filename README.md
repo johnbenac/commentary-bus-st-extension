@@ -21,93 +21,97 @@ Commentary Bus is a comprehensive Server-Sent Events (SSE) based system that all
 
 ```
 commentary-bus/
-├── claude-commentary-bridge/     # 🌉 Claude Code → Commentary Bus bridge
-│   ├── bridge.js                 # Main bridge service with HTTP API
-│   ├── package.json             # Bridge dependencies
-│   ├── README.md                # Bridge-specific documentation
-│   └── filters.yaml             # Message filtering configuration
+├── unified-service/              # 🎯 Unified Commentary Service v2.0
+│   ├── commentary-service.js    # Combined SSE server + Claude monitor
+│   ├── filters.yaml             # Message filtering configuration
+│   ├── package.json             # Service dependencies
+│   └── README.md                # Service documentation
 ├── extension/                    # 🔌 SillyTavern extension
 │   ├── index.js                 # Extension main file
-│   ├── manifest.json            # Extension metadata
+│   ├── manifest.json            # Extension metadata (at repo root)
 │   └── README.md                # Extension documentation
-├── server/                       # 📡 Commentary Bus SSE server
-│   ├── commentary-bus.js        # Main server
-│   ├── package.json             # Server dependencies
-│   └── README.md                # Server documentation
 ├── docs/                         # 📚 Comprehensive documentation
 ├── examples/                     # 🔧 Usage examples
-└── README.md                     # This file
+├── README.md                     # This file
+│
+├── claude-commentary-bridge/     # 📦 Legacy: Original bridge service
+├── server/                       # 📦 Legacy: Original SSE server
+└── manifest.json                 # Extension manifest (required at root)
 ```
 
 ## 🚀 Quick Start
 
-### 1. Start the Commentary Bus Server
+### 1. Start the Unified Commentary Service
 ```bash
-cd server/
+cd unified-service/
 npm install
-npm start
+node commentary-service.js
+# or with nohup:
+nohup node commentary-service.js &
 ```
-Server runs on http://127.0.0.1:5055
+Service runs on http://127.0.0.1:5055 (combines SSE server + Claude monitoring)
 
-### 2. Start the Claude Commentary Bridge
-```bash
-cd claude-commentary-bridge/
-npm install
-node bridge.js
-```
-The bridge starts on port 5056 with HTTP API for dynamic configuration.
-
-### 3. Install Extension in SillyTavern
+### 2. Install Extension in SillyTavern
 1. Go to Extensions → Install Extension
 2. Enter: `https://github.com/johnbenac/commentary-bus-st-extension`
 3. Click Install
 4. Enable in Extensions panel
 
-### 4. Configure Extension
+### 3. Configure Extension
 1. In Extensions panel, find "Commentary Bus"
-2. Set **Project Directory Path** to your Claude project folder
-3. Example: `/var/workstation/assistants/commentator`
-4. The bridge will automatically transform this to Claude's internal format
-5. Bridge URL should be: `http://127.0.0.1:5056`
+2. Set **Service URL** to: `http://127.0.0.1:5055`
+3. Set **Project Directory Path** to your Claude project folder
+4. Example: `/var/workstation/assistants/commentator`
+5. The service automatically transforms this to Claude's internal format
 
-### 5. Add Commentator to Group
+### 4. Add Commentator to Group
 Create a character named "Commentator" and add to your group chat
 
-### 6. Test It!
+### 5. Test It!
 
 **Manual test:**
 ```bash
 curl -X POST http://127.0.0.1:5055/ingest \
   -H 'Content-Type: application/json' \
-  -d '{"channel":"default","name":"Commentator","text":"Hello from the commentary bus!"}'
+  -d '{"channel":"default","name":"Commentator","text":"Hello from Commentary Bus v2.0!"}'
 ```
 
 **Live Claude activity:**
 - Use Claude Code in your monitored project
-- Activity will automatically appear in SillyTavern as commentary
+- Activity appears instantly in SillyTavern as commentary
+- See tool usage like: `Reading file.yaml (50 lines)`
 
 ## 🏗️ Architecture
 
-### Complete System Flow
+### Unified Service Architecture (v2.0)
 ```
-SillyTavern Extension → Bridge API → Claude Commentary Bridge → Commentary Bus → SillyTavern Chat
-    Config UI            HTTP 5056      Monitor Folder         SSE 5055         Chat Display
-        ↓                    ↓               ↓                     ↓                  ↓
-   Set Project Path    Transform Path   Parse Messages      Broadcast Events    Inject as /sendas
+SillyTavern Extension → Unified Commentary Service → SillyTavern Chat
+    Config UI              (Port 5055)               Chat Display
+        ↓                      ↓                          ↓
+   Set Project Path    Monitor + Broadcast         Inject as /sendas
 ```
 
-### Component Integration
+### Complete System Flow
 ```
-┌─────────────────┐         ┌──────────────────┐    ┌─────────────────┐
-│ SillyTavern     │ ------> │ Commentary Bridge│ -> │ Commentary Bus  │
-│ Extension UI    │  HTTP   │ (folder monitor) │    │ (SSE server)    │
-│                 │  5056   │ + HTTP API       │    │ Port 5055       │
-└─────────────────┘         └──────────────────┘    └─────────────────┘
-        ↑                            ↓                        ↓
-        │                     Claude Session             SSE Stream
-        │                     Files (*.jsonl)                ↓
-        └────────────────────────────────────────────────────┘
+┌─────────────────┐         ┌─────────────────────────┐
+│ SillyTavern     │ ------> │ Unified Commentary      │
+│ Extension UI    │  HTTP   │ Service (Port 5055)    │
+│                 │         │ • SSE Server            │
+│                 │         │ • Claude File Monitor   │
+│                 │         │ • Dynamic Config API    │
+└─────────────────┘         └─────────────────────────┘
+        ↑                              ↓
+        │                         SSE Stream
+        │                              ↓
+        └──────────────────────────────┘
 ```
+
+### Data Flow
+1. **Configuration**: Extension sends project path to service API
+2. **Monitoring**: Service watches Claude session files (*.jsonl)
+3. **Processing**: Messages are parsed, formatted, and filtered
+4. **Broadcasting**: Formatted messages sent via SSE to subscribers
+5. **Display**: Extension injects messages into SillyTavern chat
 
 ## 🌟 What's New in v2.0
 

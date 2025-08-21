@@ -11,14 +11,14 @@
 
 **Solutions:**
 
-1. **Check server is running:**
+1. **Check unified service is running:**
    ```bash
    curl http://127.0.0.1:5055/status
    ```
-   Should return JSON with `"status": "running"`
+   Should return JSON with service status and client count
 
 2. **Verify correct URL in extension settings:**
-   - Should be `http://127.0.0.1:5055` (no trailing slash)
+   - Service URL should be `http://127.0.0.1:5055` (no trailing slash)
    - NOT `https://` (no SSL)
    - NOT `localhost` (use 127.0.0.1)
 
@@ -26,16 +26,16 @@
    - Look for CORS errors
    - Look for "net::ERR_CONNECTION_REFUSED"
 
-4. **Restart the server:**
+4. **Restart the unified service:**
    ```bash
-   cd commentary-bus-st-extension/server
-   npm start
+   cd commentary-bus-st-extension/unified-service
+   node commentary-service.js
    ```
 
 ### Messages Not Appearing in Chat
 
 **Symptoms:**
-- Server shows client connected
+- Service shows client connected
 - `/ingest` returns success
 - But no messages in SillyTavern
 
@@ -56,17 +56,23 @@
    - Look for `/sendas` command failures
    - Check for JavaScript errors
 
+5. **Claude monitoring specific:**
+   - Verify project path is set correctly
+   - Check service logs for file monitoring activity
+   - Ensure Claude is creating session files in the monitored directory
+
 ### Connection Keeps Dropping
 
 **Symptoms:**
 - "Connection lost, retrying..." notifications
-- Server logs show repeated connect/disconnect
+- Service logs show repeated connect/disconnect
 
 **Solutions:**
 
-1. **Update CORS settings:**
-   - Server should use `origin: '*'` for open access
-   - Or add your specific SillyTavern URL
+1. **Check service stability:**
+   - Look for crashes in service logs
+   - Ensure sufficient system resources
+   - Check for file system permissions on monitored directories
 
 2. **Check firewall:**
    - Ensure port 5055 is not blocked
@@ -98,7 +104,7 @@
 
 ## Diagnostic Commands
 
-### Check Server Health
+### Check Unified Service Health
 ```bash
 # Is it running?
 curl http://127.0.0.1:5055/status
@@ -110,16 +116,22 @@ curl -N "http://127.0.0.1:5055/events?channel=default" | head -20
 curl -X POST http://127.0.0.1:5055/ingest \
   -H 'Content-Type: application/json' \
   -d '{"text": "Test message"}'
+
+# Check Claude monitoring configuration
+curl http://127.0.0.1:5055/config/session-dir
 ```
 
 ### Check Process
 ```bash
-# Find Node.js processes
-ps aux | grep node
+# Find Commentary Service process
+ps aux | grep commentary-service
 
 # Check port usage
 netstat -an | grep 5055  # Linux/Mac
 netstat -an | findstr 5055  # Windows
+
+# Check service logs (if using nohup)
+tail -f nohup.out
 ```
 
 ### Browser Debugging
@@ -184,14 +196,10 @@ es.onerror = (e) => console.error('Error:', e);
    - Enable "Log heartbeats" checkbox
    - Watch browser console for activity
 
-2. **Server verbose mode:**
-   ```javascript
-   // Add to server code
-   app.use((req, res, next) => {
-     console.log(`${req.method} ${req.path}`);
-     next();
-   });
-   ```
+2. **Service verbose mode:**
+   - Service already logs key events
+   - Check for Claude file monitoring activity
+   - Look for message parsing and formatting logs
 
 3. **Network inspection:**
    - Browser DevTools → Network tab
@@ -202,27 +210,30 @@ es.onerror = (e) => console.error('Error:', e);
 
 If all else fails:
 
-1. Stop server (Ctrl+C)
+1. Stop unified service (Ctrl+C or `pkill -f commentary-service`)
 2. Clear browser cache
 3. Disable/re-enable extension
-4. Restart server
+4. Restart unified service
 5. Hard refresh SillyTavern
+6. Re-configure project path if using Claude monitoring
 
 ## Getting Help
 
 1. **Check the logs:**
-   - Server: `commentary-bus.log`
+   - Unified Service: Terminal output or `nohup.out`
    - Browser: F12 console
    - SillyTavern: Check for error toasts
 
 2. **Version info:**
    - Node.js: `node --version` (needs 16+)
-   - Check `manifest.json` for extension version
+   - Check `manifest.json` for extension version (should be 2.0.0)
    - SillyTavern version in About dialog
+   - Service version in `unified-service/package.json`
 
 3. **Report issues:**
    - Include error messages
-   - Server and browser logs
+   - Service and browser logs
    - Steps to reproduce
+   - Whether using Claude monitoring or manual messages
 
-Remember: Most issues are connection-related. Ensure the server is running and accessible!
+Remember: Most issues are connection-related. Ensure the unified service is running and accessible!

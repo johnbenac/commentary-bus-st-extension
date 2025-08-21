@@ -1,5 +1,20 @@
 # Examples 💡
 
+## Claude Code Monitoring
+
+### Live Development Commentary
+
+When you set a project directory path in the extension, Claude's activity automatically appears:
+
+```
+Claude: Reading config.yaml (46 lines)
+Claude: Writing server.js (1234B): // Express server setup...
+Claude: Searching for "TODO" in ./src
+Claude: 5 todos updated → pending: "Add error handling"...
+```
+
+No additional setup needed - just configure the project path!
+
 ## Basic Message Sending
 
 ### Bash/cURL
