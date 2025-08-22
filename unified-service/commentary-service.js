@@ -49,6 +49,8 @@ let config = {
   channels: { default: 'claude-meta' },
   filters: {
     include_types: ['assistant', 'tool_call', 'git_action', 'file_operation', 'session_start', 'user'],
+    include_subtypes: ['assistant_text', 'assistant_tool_use', 'user_text', 'session_start', 'session_end'],
+    exclude_subtypes: [],
     exclude_patterns: ['.*heartbeat.*', '.*ping.*'],
     min_message_length: 10
   },
@@ -112,12 +114,22 @@ function projectPathToSessionPath(inputPath) {
   return `/root/.claude/projects/-${transformed}`;
 }
 
-// Message filtering
+// Message filtering - now includes subtype support
 function shouldSend(event) {
   if (!config.enabled) return false;
   
+  // First check base type
   const eventType = event.event || event.type || 'unknown';
   if (config.filters.include_types?.length && !config.filters.include_types.includes(eventType)) {
+    return false;
+  }
+
+  // Then check subtype filtering
+  const subtype = classifyEvent(event);
+  if (config.filters.include_subtypes?.length && !config.filters.include_subtypes.includes(subtype)) {
+    return false;
+  }
+  if (config.filters.exclude_subtypes?.length && config.filters.exclude_subtypes.includes(subtype)) {
     return false;
   }
 
@@ -146,6 +158,57 @@ function shouldSend(event) {
 
 // Helper function from working bridge
 function truncate(s, n = 3000) { return !s ? '' : (s.length <= n ? s : s.slice(0, n) + '...'); }
+
+// ---------- Unified message helpers ----------
+
+// Extract all text blocks in order (works for user & assistant)
+function extractTextBlocks(event) {
+  const blocks = event?.message?.content || [];
+  const out = [];
+  for (const b of blocks) {
+    if (b?.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+      out.push(b.text);
+    }
+  }
+  return out.join('\n');
+}
+
+// Summarize user tool_result blocks (if you choose to show them)
+function formatUserToolResult(event) {
+  const blocks = (event?.message?.content || []).filter(b => b?.type === 'tool_result');
+  if (!blocks.length) return '';
+  const parts = [];
+  for (const [i, b] of blocks.entries()) {
+    const raw = typeof b.content === 'string' ? b.content
+      : (Array.isArray(b.content) ? JSON.stringify(b.content) : String(b.content ?? ''));
+    parts.push(`#${i+1} ${truncate(raw, 800)}`);
+    if (i === 1 && blocks.length > 2) { // cap preview
+      parts.push(`(+${blocks.length - 2} more)`);
+      break;
+    }
+  }
+  return `🧰 Tool result${blocks.length > 1 ? 's' : ''}: ${parts.join(' | ')}`;
+}
+
+// Subtype classifier: one place to decide routing
+function classifyEvent(event) {
+  const t = event?.type || event?.event || 'unknown';
+  if (t === 'assistant') {
+    return event.tool_name ? 'assistant_tool_use' : 'assistant_text';
+  }
+  if (t === 'user') {
+    const first = event?.message?.content?.[0];
+    if (first?.type === 'tool_result') return 'user_tool_result';
+    if (first?.type === 'text' && /\binterrupted\b/i.test(first.text || '')) return 'user_interrupt';
+    return 'user_text';
+  }
+  return t; // session_start, session_end, error, etc.
+}
+
+// Map subtype -> speaker name (overridable later via config if desired)
+function speakerFor(subtype) {
+  return subtype.startsWith('user_') ? 'You' : 'Claude';
+}
 
 // Format tool messages - copied from working bridge
 function formatToolMessage(event) {
@@ -187,25 +250,22 @@ function formatToolMessage(event) {
   }
 }
 
-// Format messages for display - simplified to match working bridge
+// Format messages for display - unified registry-based approach
 function formatMessage(event) {
-  switch (event.type) {
-    case 'user': {
-      const s = truncate(event.message?.content || '', 2500);
-      return `${s}`;
-    }
-    case 'assistant': {
-      if (event.tool_name) return formatToolMessage(event);
-      const txt = event.message?.content?.[0]?.text || '';
-      return `${truncate(txt, 2500)}`;
-    }
-    case 'tool_call':
-      return formatToolMessage(event);
-    case 'session_start':
-      return `🚀 New Claude session started`;
-    default:
-      return `Activity`;
-  }
+  const subtype = classifyEvent(event);
+
+  const HANDLERS = {
+    'assistant_tool_use': e => formatToolMessage(e),
+    'assistant_text':     e => truncate(extractTextBlocks(e), 2500),
+    'user_text':          e => truncate(extractTextBlocks(e), 2500),
+    'user_tool_result':   e => formatUserToolResult(e),
+    'session_start':      () => '🚀 New Claude session started',
+    'session_end':        () => '🏁 Session ended',
+    'error':              e => `⚠️ ${truncate(extractTextBlocks(e) || JSON.stringify(e).slice(0, 2000), 2000)}`,
+    'unknown':            () => 'Activity'
+  };
+
+  return (HANDLERS[subtype] || HANDLERS['unknown'])(event);
 }
 
 // Rate limiting
@@ -234,7 +294,7 @@ function checkRateLimit(channel) {
   return true;
 }
 
-// Process and send message
+// Process and send message - now with dynamic speaker names
 async function processMessage(event, sessionFile) {
   if (!shouldSend(event)) return;
 
@@ -247,18 +307,22 @@ async function processMessage(event, sessionFile) {
   }
 
   const text = formatMessage(event);
+  const subtype = classifyEvent(event);
+  const speaker = speakerFor(subtype);
+  
   const payload = {
     channel,
-    name: 'Claude',
+    name: speaker,
     text,
     ts: event.ts || Date.now(),
     type: event.event || event.type,
+    subtype: subtype,
     sessionFile: path.basename(sessionFile)
   };
 
   // Broadcast via SSE
   broadcast(channel, 'chat', payload);
-  // console.log('📣 broadcast', { channel, type: payload.type });
+  // console.log('📣 broadcast', { channel, type: payload.type, subtype });
 }
 
 // Message ordering buffer

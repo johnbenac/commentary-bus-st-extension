@@ -11,7 +11,7 @@ channels:
 
 # Event filtering
 filters:
-  # Types of events to include
+  # Types of events to include (base types)
   include_types:
     - "assistant"          # AI responses
     - "tool_call"         # Tool executions
@@ -21,6 +21,22 @@ filters:
     - "session_end"       # Chat sessions ending
     - "command"           # Shell commands
     - "error"             # Errors and warnings
+    - "user"              # User messages
+  
+  # Subtypes to include (optional - if not specified, all subtypes of included types are shown)
+  include_subtypes:
+    - "assistant_text"     # Claude's text responses
+    - "assistant_tool_use" # Claude's tool usage
+    - "user_text"          # User's text messages
+    - "session_start"      # Session starts
+    - "session_end"        # Session ends
+    # - "user_tool_result" # Uncomment to show tool results
+    # - "user_interrupt"   # Uncomment to show interruptions
+  
+  # Subtypes to explicitly exclude (takes precedence over include_subtypes)
+  # exclude_subtypes:
+  #   - "user_tool_result"
+  #   - "user_interrupt"
 
   # Regex patterns to exclude (case insensitive)
   exclude_patterns:
