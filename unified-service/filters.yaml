@@ -24,29 +24,23 @@ filters:
     - "user"              # User messages
   
   # Subtypes to include (optional - if not specified, all subtypes of included types are shown)
-  include_subtypes:
-    - "assistant_text"     # Claude's text responses
-    - "assistant_tool_use" # Claude's tool usage
-    - "user_text"          # User's text messages
-    - "session_start"      # Session starts
-    - "session_end"        # Session ends
-    # - "user_tool_result" # Uncomment to show tool results
-    # - "user_interrupt"   # Uncomment to show interruptions
+  # include_subtypes:  # Commented out - show ALL subtypes
+  #   - "assistant_text"     # Claude's text responses
+  #   - "assistant_tool_use" # Claude's tool usage
+  #   - "user_text"          # User's text messages
+  #   - "session_start"      # Session starts
+  #   - "session_end"        # Session ends
+  #   - "user_tool_result"   # Tool results
+  #   - "user_interrupt"     # Interruptions
   
   # Subtypes to explicitly exclude (takes precedence over include_subtypes)
-  # exclude_subtypes:
-  #   - "user_tool_result"
-  #   - "user_interrupt"
-
+  exclude_subtypes: []  # Empty - exclude nothing
+  
   # Regex patterns to exclude (case insensitive)
-  exclude_patterns:
-    - ".*heartbeat.*"
-    - ".*ping.*"
-    - ".*health.*check.*"
-    - ".*status.*poll.*"
+  exclude_patterns: []  # Empty - no pattern exclusions
 
   # Minimum message length to send
-  min_message_length: 10
+  min_message_length: 0  # No minimum - show everything
 
 # Rate limiting (per channel)
 rate_limit:

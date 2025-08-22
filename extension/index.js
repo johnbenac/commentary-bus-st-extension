@@ -284,7 +284,7 @@
     }
   }
 
-  async function sendAs(name, text) {
+  async function sendAs(name, text, isUserMessage = false) {
     // Prefer the modern helper if present
     try {
       const mod = await import('/scripts/slash-commands.js');
@@ -300,13 +300,18 @@
         .replace(/:}/g, '\\:}');     // closure close
       // NOTE: no .replace(/\|/g, '\\|') here — STRICT_ESCAPING + quotes make it unnecessary
 
-      const cmd =
-        `/parser-flag STRICT_ESCAPING on || ` +
-        `/sendas name="${name}" raw=false "${escaped}"`;
+      let cmd;
+      if (isUserMessage) {
+        // Use /send for real user messages - SillyTavern will handle the labeling
+        cmd = `/parser-flag STRICT_ESCAPING on || /send "${escaped}"`;
+      } else {
+        // Use /sendas for character/system messages
+        cmd = `/parser-flag STRICT_ESCAPING on || /sendas name="${name}" raw=false "${escaped}"`;
+      }
 
       await run(cmd);
     } catch (err) {
-      console.error(`[${TITLE}] /sendas failed`, err);
+      console.error(`[${TITLE}] ${isUserMessage ? '/send' : '/sendas'} failed`, err);
       toastr.error('Failed to inject message', TITLE);
     }
   }
@@ -347,8 +352,9 @@
           const payload = JSON.parse(e.data ?? '{}');
           const name = String(payload.name || st.speaker || 'Commentator');
           const text = String(payload.text ?? '').trim();
+          const isUserMessage = payload.isUserMessage === true;
           if (!text) return;
-          await sendAs(name, text);
+          await sendAs(name, text, isUserMessage);
         } catch (err) {
           console.error(`[${TITLE}] bad chat payload`, err, e?.data);
         }

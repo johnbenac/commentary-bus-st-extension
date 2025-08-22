@@ -163,14 +163,18 @@ function truncate(s, n = 3000) { return !s ? '' : (s.length <= n ? s : s.slice(0
 
 // Extract all text blocks in order (works for user & assistant)
 function extractTextBlocks(event) {
-  const blocks = event?.message?.content || [];
-  const out = [];
-  for (const b of blocks) {
-    if (b?.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
-      out.push(b.text);
+  const c = event?.message?.content;
+  if (typeof c === 'string') return c;  // Plain string (user text messages)
+  if (Array.isArray(c)) {
+    const out = [];
+    for (const b of c) {
+      if (b?.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+        out.push(b.text);
+      }
     }
+    return out.join('\n');
   }
-  return out.join('\n');
+  return '';
 }
 
 // Summarize user tool_result blocks (if you choose to show them)
@@ -193,21 +197,42 @@ function formatUserToolResult(event) {
 // Subtype classifier: one place to decide routing
 function classifyEvent(event) {
   const t = event?.type || event?.event || 'unknown';
+  const c = event?.message?.content;
+  
   if (t === 'assistant') {
     return event.tool_name ? 'assistant_tool_use' : 'assistant_text';
   }
+  
   if (t === 'user') {
-    const first = event?.message?.content?.[0];
-    if (first?.type === 'tool_result') return 'user_tool_result';
-    if (first?.type === 'text' && /\binterrupted\b/i.test(first.text || '')) return 'user_interrupt';
-    return 'user_text';
+    // Handle string content (plain user text)
+    if (typeof c === 'string') return 'user_text';
+    
+    // Handle array content
+    if (Array.isArray(c)) {
+      const first = c[0];
+      if (first?.type === 'tool_result') return 'user_tool_result';
+      if (first?.type === 'text' && /\binterrupted\b/i.test(first.text || '')) return 'user_interrupt';
+      if (c.some(b => b?.type === 'text')) return 'user_text';
+    }
+    return 'user_text'; // Default for user messages
   }
+  
   return t; // session_start, session_end, error, etc.
 }
 
 // Map subtype -> speaker name (overridable later via config if desired)
 function speakerFor(subtype) {
+  if (subtype === 'user_tool_result') return 'Tools';   // Synthetic tool results
+  if (subtype === 'user_interrupt')  return 'System';   // System interruptions
   return subtype.startsWith('user_') ? 'You' : 'Claude';
+}
+
+// Map subtype -> origin type for clearer tagging
+function originFor(subtype) {
+  if (subtype === 'user_tool_result') return 'tool';
+  if (subtype === 'user_interrupt')  return 'system';
+  if (subtype.startsWith('user_'))   return 'human';
+  return 'assistant';
 }
 
 // Format tool messages - copied from working bridge
@@ -250,19 +275,50 @@ function formatToolMessage(event) {
   }
 }
 
-// Format messages for display - unified registry-based approach
+// Format messages for display - unified registry-based approach with type info
 function formatMessage(event) {
   const subtype = classifyEvent(event);
+  
+  // Collect all type information
+  const types = [];
+  
+  // Base type
+  if (event.type) types.push(`type:${event.type}`);
+  if (event.event) types.push(`event:${event.event}`);
+  
+  // Subtype
+  types.push(`subtype:${subtype}`);
+  
+  // Origin type for clarity
+  const origin = originFor(subtype);
+  types.push(`origin:${origin}`);
+  
+  // Content types if they exist
+  const content = event?.message?.content;
+  if (Array.isArray(content)) {
+    const contentTypes = content.map(c => c?.type).filter(Boolean);
+    if (contentTypes.length > 0) {
+      types.push(`content:[${contentTypes.join(',')}]`);
+    }
+  } else if (typeof content === 'string') {
+    types.push(`content:string`);
+  }
+  
+  // Tool name if present
+  if (event.tool_name) types.push(`tool:${event.tool_name}`);
+  
+  // Format type prefix
+  const typePrefix = `[${types.join(' ')}] `;
 
   const HANDLERS = {
-    'assistant_tool_use': e => formatToolMessage(e),
-    'assistant_text':     e => truncate(extractTextBlocks(e), 2500),
-    'user_text':          e => truncate(extractTextBlocks(e), 2500),
-    'user_tool_result':   e => formatUserToolResult(e),
-    'session_start':      () => '🚀 New Claude session started',
-    'session_end':        () => '🏁 Session ended',
-    'error':              e => `⚠️ ${truncate(extractTextBlocks(e) || JSON.stringify(e).slice(0, 2000), 2000)}`,
-    'unknown':            () => 'Activity'
+    'assistant_tool_use': e => typePrefix + formatToolMessage(e),
+    'assistant_text':     e => typePrefix + truncate(extractTextBlocks(e), 2500),
+    'user_text':          e => typePrefix + truncate(extractTextBlocks(e), 2500),
+    'user_tool_result':   e => typePrefix + formatUserToolResult(e),
+    'session_start':      () => typePrefix + '🚀 New Claude session started',
+    'session_end':        () => typePrefix + '🏁 Session ended',
+    'error':              e => typePrefix + `⚠️ ${truncate(extractTextBlocks(e) || JSON.stringify(e).slice(0, 2000), 2000)}`,
+    'unknown':            () => typePrefix + 'Activity'
   };
 
   return (HANDLERS[subtype] || HANDLERS['unknown'])(event);
@@ -317,7 +373,8 @@ async function processMessage(event, sessionFile) {
     ts: event.ts || Date.now(),
     type: event.event || event.type,
     subtype: subtype,
-    sessionFile: path.basename(sessionFile)
+    sessionFile: path.basename(sessionFile),
+    isUserMessage: subtype === 'user_text'  // Flag for real user messages
   };
 
   // Broadcast via SSE
