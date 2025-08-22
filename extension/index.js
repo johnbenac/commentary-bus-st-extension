@@ -290,26 +290,18 @@
       const mod = await import('/scripts/slash-commands.js');
       const run = mod.executeSlashCommandsWithOptions || mod.executeSlashCommands;
       
-      // minimal, ordered escapes for a quoted STscript string
-      let escaped = String(text)
-        .replace(/\\/g, '\\\\')   // backslashes
-        .replace(/"/g, '\\"')     // quotes
-        .replace(/\{\{/g, '\\{\\{')  // macro open
-        .replace(/\}\}/g, '\\}\\}')  // macro close
-        .replace(/\{:/g, '\\{:')     // closure open
-        .replace(/:}/g, '\\:}');     // closure close
-      // NOTE: no .replace(/\|/g, '\\|') here — STRICT_ESCAPING + quotes make it unnecessary
+      // Minimal escape - just backslashes and quotes
+      const escaped = String(text)
+        .replace(/\\/g, '\\\\')   // backslashes first
+        .replace(/"/g, '\\"');    // then quotes
 
-      let cmd;
       if (isUserMessage) {
-        // Use /send for real user messages - SillyTavern will handle the labeling
-        cmd = `/parser-flag STRICT_ESCAPING on || /send "${escaped}"`;
+        // Real human message - use /send with no name, let ST label it
+        await run(`/send "${escaped}"`, { quiet: true });
       } else {
-        // Use /sendas for character/system messages
-        cmd = `/parser-flag STRICT_ESCAPING on || /sendas name="${name}" raw=false "${escaped}"`;
+        // Character/system message - use /sendas with name
+        await run(`/sendas name="${name}" "${escaped}"`, { quiet: true });
       }
-
-      await run(cmd);
     } catch (err) {
       console.error(`[${TITLE}] ${isUserMessage ? '/send' : '/sendas'} failed`, err);
       toastr.error('Failed to inject message', TITLE);
@@ -350,11 +342,19 @@
       es.addEventListener('chat', async (e) => {
         try {
           const payload = JSON.parse(e.data ?? '{}');
-          const name = String(payload.name || st.speaker || 'Commentator');
           const text = String(payload.text ?? '').trim();
           const isUserMessage = payload.isUserMessage === true;
+          
           if (!text) return;
-          await sendAs(name, text, isUserMessage);
+          
+          // For user messages, ignore the name entirely
+          if (isUserMessage) {
+            await sendAs(null, text, true);
+          } else {
+            // For other messages, use the provided name or fallback
+            const name = String(payload.name || st.speaker || 'Commentator');
+            await sendAs(name, text, false);
+          }
         } catch (err) {
           console.error(`[${TITLE}] bad chat payload`, err, e?.data);
         }

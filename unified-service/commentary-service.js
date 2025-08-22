@@ -222,9 +222,10 @@ function classifyEvent(event) {
 
 // Map subtype -> speaker name (overridable later via config if desired)
 function speakerFor(subtype) {
+  if (subtype === 'user_text') return null;  // No name for real user messages - let ST handle it
   if (subtype === 'user_tool_result') return 'Tools';   // Synthetic tool results
   if (subtype === 'user_interrupt')  return 'System';   // System interruptions
-  return subtype.startsWith('user_') ? 'You' : 'Claude';
+  return subtype.startsWith('user_') ? 'System' : 'Claude';  // Other user types are system
 }
 
 // Map subtype -> origin type for clearer tagging
