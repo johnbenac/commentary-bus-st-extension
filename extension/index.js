@@ -327,19 +327,45 @@
 
   // --- Prefix parser: extracts meta + clean text
   function parsePrefix(raw) {
-    let s = String(raw ?? '');
-    let meta = null;
-    // Case A: "([type: ... ] rest)" → capture inner then split
-    let m = s.match(/^\s*\(\s*\[([^\]]+)\]\s+([\s\S]*?)\)\s*$/);
-    if (!m) {
-      // Case B: "[type: ... ] rest"
-      m = s.match(/^\s*\[([^\]]+)\]\s+([\s\S]*)$/);
+    const s0 = String(raw ?? '');
+    let s = s0;
+    let i = 0;
+    // skip leading whitespace
+    while (i < s.length && /\s/.test(s[i])) i++;
+    // optional outer parens
+    let hasParen = false;
+    if (s[i] === '(') {
+      hasParen = true;
+      i++;
+      while (i < s.length && /\s/.test(s[i])) i++;
     }
-    if (m) {
-      meta = parseMetaBlock(m[1]);
-      s = m[2];
+    // must start with '[' for a meta block
+    if (s[i] !== '[') return { text: s0.trim(), meta: null };
+    // walk nested brackets to find the matching closing ']'
+    const start = i + 1;
+    let depth = 1;
+    let k = start;
+    for (; k < s.length; k++) {
+      const ch = s[k];
+      if (ch === '[') depth++;
+      else if (ch === ']') {
+        depth--;
+        if (depth === 0) break;
+      }
     }
-    return { text: s.trim(), meta };
+    // unbalanced or no close: give up and return original
+    if (depth !== 0) return { text: s0.trim(), meta: null };
+    const metaBlock = s.slice(start, k);
+    // move to content after ']' and whitespace
+    let rest = k + 1;
+    while (rest < s.length && /\s/.test(s[rest])) rest++;
+    // if we had outer parens, optionally consume a trailing ')'
+    if (hasParen && s[rest] === ')') {
+      rest++;
+      while (rest < s.length && /\s/.test(s[rest])) rest++;
+    }
+    const text = s.slice(rest).trim();
+    return { text, meta: parseMetaBlock(metaBlock) };
   }
 
   function parseMetaBlock(block) {
