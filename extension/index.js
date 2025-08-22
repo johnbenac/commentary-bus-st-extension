@@ -285,26 +285,28 @@
   }
 
   async function sendAs(name, text, isUserMessage = false) {
-    // Prefer the modern helper if present
     try {
-      const mod = await import('/scripts/slash-commands.js');
-      const run = mod.executeSlashCommandsWithOptions || mod.executeSlashCommands;
-      
-      // Minimal escape - just backslashes and quotes
+      const ctx = SillyTavern.getContext();
+      const run = ctx.executeSlashCommandsWithOptions || ctx.executeSlashCommands;
+
+      // STscript: prefer ( ... ) for the unnamed text arg; escape ) and backslashes.
       const escaped = String(text)
-        .replace(/\\/g, '\\\\')   // backslashes first
-        .replace(/"/g, '\\"');    // then quotes
+        .replace(/\\/g, '\\\\')    // backslashes first
+        .replace(/\)/g, '\\)');    // balance the ( ... ) arg
 
       if (isUserMessage) {
-        // Real human message - use /send with no name, let ST label it
-        await run(`/send "${escaped}"`, { quiet: true });
+        // Adds a message as the CURRENT PERSONA (that's what we want). 
+        // Docs: `/send (text)`
+        await run(`/send (${escaped})`, { quiet: true });
       } else {
-        // Character/system message - use /sendas with name
-        await run(`/sendas name="${name}" "${escaped}"`, { quiet: true });
+        // Adds a message as a specific character by NAME.
+        // Docs: `/sendas name=char (text)`
+        const target = String(name || 'Commentator');
+        await run(`/sendas name=${JSON.stringify(target)} (${escaped})`, { quiet: true });
       }
     } catch (err) {
-      console.error(`[${TITLE}] ${isUserMessage ? '/send' : '/sendas'} failed`, err);
-      toastr.error('Failed to inject message', TITLE);
+      console.error(`[${TITLE}] STscript injection failed`, err);
+      try { toastr.error('Failed to inject message', TITLE); } catch {}
     }
   }
 
