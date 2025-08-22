@@ -305,20 +305,21 @@
       const ctx = SillyTavern.getContext();
       const run = ctx.executeSlashCommandsWithOptions || ctx.executeSlashCommands;
 
-      // STscript: prefer ( ... ) for the unnamed text arg; escape ) and backslashes.
-      const escaped = String(text)
-        .replace(/\\/g, '\\\\')    // backslashes first
-        .replace(/\)/g, '\\)');    // balance the ( ... ) arg
+      // Use a closure block for the text argument so delimiters never appear in output.
+      // Also escape literal closure delimiters inside user/assistant text.
+      const body = String(text)
+        .replace(/\\/g, '\\\\')          // keep backslashes sane
+        .replace(/\{\:/g, '\\{:')        // escape "{:" opening
+        .replace(/\:\}/g, '\\:}');       // escape ":}" closing
+
+      const block = `{:${body}:}`;       // raw multi-line payload
+      const rawFlag = 'raw=false';       // ensure quotes aren't preserved (ST 1.12.16+) 
 
       if (isUserMessage) {
-        // Adds a message as the CURRENT PERSONA (that's what we want). 
-        // Docs: `/send (text)`
-        await run(`/send (${escaped})`, { quiet: true });
+        await run(`/send ${rawFlag} ${block}`, { quiet: true });
       } else {
-        // Adds a message as a specific character by NAME.
-        // Docs: `/sendas name=char (text)`
-        const target = String(name || 'Commentator');
-        await run(`/sendas name=${JSON.stringify(target)} (${escaped})`, { quiet: true });
+        const target = String(name || 'Claude');
+        await run(`/sendas name=${JSON.stringify(target)} ${rawFlag} ${block}`, { quiet: true });
       }
     } catch (err) {
       console.error(`[${TITLE}] STscript injection failed`, err);
