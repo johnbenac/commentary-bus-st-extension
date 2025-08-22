@@ -305,21 +305,19 @@
       const ctx = SillyTavern.getContext();
       const run = ctx.executeSlashCommandsWithOptions || ctx.executeSlashCommands;
 
-      // Use a closure block for the text argument so delimiters never appear in output.
-      // Also escape literal closure delimiters inside user/assistant text.
-      const body = String(text)
-        .replace(/\\/g, '\\\\')          // keep backslashes sane
-        .replace(/\{\:/g, '\\{:')        // escape "{:" opening
-        .replace(/\:\}/g, '\\:}');       // escape ":}" closing
+      // Safe text payload via /pass → pipes into /send(/sendas) without parentheses
+      // Escape backslashes, quotes, and pipes (|) for quoted strings.
+      const payload = String(text)
+        .replace(/\\/g, '\\\\')   // backslashes
+        .replace(/"/g, '\\"')     // quotes
+        .replace(/\|/g, '\\|');   // pipe is a command separator outside strict mode
 
-      const block = `{:${body}:}`;       // raw multi-line payload
-      const rawFlag = 'raw=false';       // ensure quotes aren't preserved (ST 1.12.16+) 
-
+      const rawFlag = 'raw=false'; // 1.13.0+: control quote preservation in send cmds
       if (isUserMessage) {
-        await run(`/send ${rawFlag} ${block}`, { quiet: true });
+        await run(`/pass "${payload}" | /send ${rawFlag}`, { quiet: true });
       } else {
         const target = String(name || 'Claude');
-        await run(`/sendas name=${JSON.stringify(target)} ${rawFlag} ${block}`, { quiet: true });
+        await run(`/pass "${payload}" | /sendas name=${JSON.stringify(target)} ${rawFlag}`, { quiet: true });
       }
     } catch (err) {
       console.error(`[${TITLE}] STscript injection failed`, err);
