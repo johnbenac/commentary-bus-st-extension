@@ -17,7 +17,8 @@
     channel: 'default',      // or "auto"
     speaker: 'Commentator',
     logHeartbeats: false,
-    sessionDir: ''           // current session folder being monitored (project path)
+    sessionDir: '',          // current session folder being monitored (project path)
+    metaMode: 'inline'       // 'inline' | 'tooltip' | 'off' - how to display message metadata
   });
 
   /** @type {ReturnType<typeof SillyTavern.getContext>} */
@@ -124,6 +125,14 @@
               <span>Log heartbeats</span>
             </label>
 
+            <label for="cbus-meta-mode">Metadata display:</label>
+            <select id="cbus-meta-mode" class="text_pole">
+              <option value="inline">Inline (default)</option>
+              <option value="tooltip">Tooltip</option>
+              <option value="off">Off</option>
+            </select>
+            <small>Show message type info as muted text, tooltip, or hide</small>
+
             <div style="margin-top: 10px; padding: 8px; border: 1px solid var(--SmartThemeBorderColor); border-radius: 4px;">
               <label style="font-weight: bold; margin-bottom: 5px; display: block;">Project Directory Path:</label>
               <div style="margin-bottom: 8px;">
@@ -197,6 +206,11 @@
       ctx.saveSettingsDebounced();
     });
 
+    $('#cbus-meta-mode').on('change', function () {
+      st.metaMode = this.value;
+      ctx.saveSettingsDebounced();
+    });
+
     $('#cbus-test').on('click', async () => {
       try {
         const res = await fetch(st.serviceUrl.replace(/\/$/, '') + '/status');
@@ -262,6 +276,7 @@
     $('#cbus-channel').val(st.channel);
     $('#cbus-speaker').val(st.speaker);
     $('#cbus-log-heartbeats').prop('checked', !!st.logHeartbeats);
+    $('#cbus-meta-mode').val(st.metaMode || 'inline');
     $('#cbus-session-dir').val(st.sessionDir || '');
     $('#cbus-active-channel').text(computeChannel());
     $('#cbus-last-url').text(lastUrl || '-');
@@ -311,6 +326,60 @@
     }
   }
 
+  // --- Prefix parser: extracts meta + clean text
+  function parsePrefix(raw) {
+    let s = String(raw ?? '');
+    let meta = null;
+    // Case A: "([type: ... ] rest)" → capture inner then split
+    let m = s.match(/^\s*\(\s*\[([^\]]+)\]\s+([\s\S]*?)\)\s*$/);
+    if (!m) {
+      // Case B: "[type: ... ] rest"
+      m = s.match(/^\s*\[([^\]]+)\]\s+([\s\S]*)$/);
+    }
+    if (m) {
+      meta = parseMetaBlock(m[1]);
+      s = m[2];
+    }
+    return { text: s.trim(), meta };
+  }
+
+  function parseMetaBlock(block) {
+    // block like: 'type:assistant event:assistant subtype:assistant_text origin:assistant content:[text] tool:Bash'
+    const parts = block.trim().split(/\s+/);
+    const kv = {};
+    for (const p of parts) {
+      const idx = p.indexOf(':');
+      if (idx > 0) {
+        const k = p.slice(0, idx);
+        const v = p.slice(idx + 1);
+        kv[k] = v;
+      }
+    }
+    // Build a concise label
+    const bits = [];
+    if (kv.type) bits.push(`type:${kv.type}`);
+    if (kv.subtype) bits.push(`subtype:${kv.subtype}`);
+    if (kv.origin) bits.push(`origin:${kv.origin}`);
+    if (kv.tool) bits.push(`tool:${kv.tool}`);
+    return { kv, label: bits.join(' · ') || block.trim() };
+  }
+
+  function appendInlineMeta(text, metaLabel) {
+    if (!metaLabel) return text;
+    // Muted, italic formatting for metadata
+    return `${text}\n\n*${metaLabel}*`;
+  }
+
+  function attachTooltipToLastBubble(metaLabel) {
+    if (!metaLabel) return;
+    try {
+      const $bubbles = $('.mes');          // SillyTavern message items
+      const $last = $bubbles.last();
+      const $txt = $last.find('.mes_text').last();
+      if ($txt.length) $txt.attr('title', metaLabel);
+    } catch {}
+  }
+
   function connect() {
     const st = getSettings();
     if (!st.enabled) return;
@@ -345,14 +414,28 @@
       es.addEventListener('chat', async (e) => {
         try {
           const payload = JSON.parse(e.data ?? '{}');
-          const text = String(payload.text ?? '').trim();
+          const parsed = parsePrefix(payload.text ?? '');
+          let text = parsed.text;
+          const metaLabel = parsed.meta?.label || '';
           const isUserMessage = payload.isUserMessage === true;
           
           if (!text) return;
+
+          const st = getSettings();
+          const metaMode = st.metaMode || 'inline';
+          
+          // Apply metadata display mode
+          if (metaMode === 'inline' && metaLabel) {
+            text = appendInlineMeta(text, metaLabel);
+          }
           
           // For user messages, ignore the name entirely
           if (isUserMessage) {
             await sendAs(null, text, true);
+            if (metaMode === 'tooltip' && metaLabel) {
+              // Small delay to let bubble render
+              setTimeout(() => attachTooltipToLastBubble(metaLabel), 50);
+            }
           } else {
             // For other messages, check if we should override the name
             let name = payload.name;
@@ -368,6 +451,9 @@
             // Fall back to payload name or default
             name = String(name || 'Claude');
             await sendAs(name, text, false);
+            if (metaMode === 'tooltip' && metaLabel) {
+              setTimeout(() => attachTooltipToLastBubble(metaLabel), 50);
+            }
           }
         } catch (err) {
           console.error(`[${TITLE}] bad chat payload`, err, e?.data);
