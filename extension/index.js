@@ -115,8 +115,9 @@
             <input id="cbus-channel" class="text_pole" type="text" placeholder="default or auto" />
             <small>Use <code>auto</code> to bind to the current group/character.</small>
 
-            <label for="cbus-speaker">Speaker name (/sendas):</label>
-            <input id="cbus-speaker" class="text_pole" type="text" placeholder="Commentator" />
+            <label for="cbus-speaker">Assistant Character Name:</label>
+            <input id="cbus-speaker" class="text_pole" type="text" placeholder="Claude" />
+            <small>Override how Claude appears in chat (leave blank to use default)</small>
 
             <label class="checkbox_label" title="Log heartbeat events to console">
               <input id="cbus-log-heartbeats" type="checkbox" />
@@ -353,8 +354,19 @@
           if (isUserMessage) {
             await sendAs(null, text, true);
           } else {
-            // For other messages, use the provided name or fallback
-            const name = String(payload.name || st.speaker || 'Commentator');
+            // For other messages, check if we should override the name
+            let name = payload.name;
+            
+            // If this is an assistant message and user has configured a custom name, use it
+            if (payload.subtype === 'assistant_text' || payload.subtype === 'assistant_tool_use') {
+              const customAssistantName = st.speaker?.trim();
+              if (customAssistantName) {
+                name = customAssistantName;
+              }
+            }
+            
+            // Fall back to payload name or default
+            name = String(name || 'Claude');
             await sendAs(name, text, false);
           }
         } catch (err) {
