@@ -1,7 +1,7 @@
 {
   "display_name": "Commentary Bus",
   "author": "Johnny",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Inject live commentary into chats from the unified Commentary Service.",
   "js": "extension/index.js",
   "css": "",

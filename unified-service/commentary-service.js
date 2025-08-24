@@ -54,7 +54,19 @@ let config = {
     exclude_patterns: ['.*heartbeat.*', '.*ping.*'],
     min_message_length: 10
   },
-  ordering: { stabilization_ms: 150 }
+  ordering: { stabilization_ms: 150 },
+  truncation: {
+    enabled: false,
+    indicator: '…',
+    limits: {
+      assistant_text: 0,
+      assistant_tool_use: 0,
+      user_text: 0,
+      user_tool_result: 0,
+      error: 0
+    },
+    max_payload: 0
+  }
 };
 
 // Load config overrides
@@ -158,6 +170,18 @@ function shouldSend(event) {
 
 // Helper function from working bridge
 function truncate(s, n = 3000) { return !s ? '' : (s.length <= n ? s : s.slice(0, n) + '...'); }
+
+function hardCapString(subtype, raw) {
+  if (!raw) return '';
+  const tcfg = config.truncation || {};
+  if (!tcfg.enabled) return raw;                          // default: no server cap
+  const limits = tcfg.limits || {};
+  const per = limits[subtype] ?? 0;                       // 0 = unlimited
+  const cap = (per && per > 0) ? per : Infinity;
+  if (raw.length <= cap) return raw;
+  const ind = tcfg.indicator ?? '…';
+  return raw.slice(0, Math.max(0, cap)) + ind;
+}
 
 // ---------- Unified message helpers ----------
 
@@ -312,13 +336,13 @@ function formatMessage(event) {
   const typePrefix = `[${types.join(' ')}] `;
 
   const HANDLERS = {
-    'assistant_tool_use': e => typePrefix + formatToolMessage(e),
-    'assistant_text':     e => typePrefix + truncate(extractTextBlocks(e), 2500),
-    'user_text':          e => typePrefix + truncate(extractTextBlocks(e), 2500),
-    'user_tool_result':   e => typePrefix + formatUserToolResult(e),
+    'assistant_tool_use': e => typePrefix + hardCapString('assistant_tool_use', formatToolMessage(e)),
+    'assistant_text':     e => typePrefix + hardCapString('assistant_text', extractTextBlocks(e)),
+    'user_text':          e => typePrefix + hardCapString('user_text', extractTextBlocks(e)),
+    'user_tool_result':   e => typePrefix + hardCapString('user_tool_result', formatUserToolResult(e)),
     'session_start':      () => typePrefix + '🚀 New Claude session started',
     'session_end':        () => typePrefix + '🏁 Session ended',
-    'error':              e => typePrefix + `⚠️ ${truncate(extractTextBlocks(e) || JSON.stringify(e).slice(0, 2000), 2000)}`,
+    'error':              e => typePrefix + hardCapString('error', `⚠️ ${extractTextBlocks(e) || JSON.stringify(e).slice(0, 2000)}`),
     'unknown':            () => typePrefix + 'Activity'
   };
 
@@ -367,7 +391,7 @@ async function processMessage(event, sessionFile) {
   const subtype = classifyEvent(event);
   const speaker = speakerFor(subtype);
   
-  const payload = {
+  let payload = {
     channel,
     name: speaker,
     text,
@@ -377,6 +401,12 @@ async function processMessage(event, sessionFile) {
     sessionFile: path.basename(sessionFile),
     isUserMessage: subtype === 'user_text'  // Flag for real user messages
   };
+  
+  const hardMax = config.truncation?.max_payload || 0;
+  if (config.truncation?.enabled && hardMax > 0 && payload.text?.length > hardMax) {
+    const ind = config.truncation?.indicator ?? '…';
+    payload.text = payload.text.slice(0, hardMax) + ind;
+  }
 
   // Broadcast via SSE
   broadcast(channel, 'chat', payload);
@@ -617,6 +647,17 @@ app.get('/config/session-dir', (req, res) => {
     watching: !!currentWatcher,
     activeTails: tails.size
   });
+});
+
+// NEW: runtime truncation toggle/caps (optional)
+app.post('/config/truncation', (req, res) => {
+  try {
+    const incoming = req.body || {};
+    config.truncation = { ...config.truncation, ...incoming };
+    res.json({ ok: true, truncation: config.truncation });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 app.post('/config/session-dir', (req, res) => {

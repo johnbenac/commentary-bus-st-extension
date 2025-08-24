@@ -47,6 +47,19 @@ rate_limit:
   messages_per_minute: 10
   burst_limit: 20
 
+# --- NEW: Truncation policy (server-side hard cap) ---
+truncation:
+  enabled: false            # keep false so extension controls UX
+  indicator: "…"            # appended when hard-capped
+  # Per-subtype byte/char caps (only used if enabled=true)
+  limits:
+    assistant_text: 0       # 0 = unlimited
+    assistant_tool_use: 0
+    user_text: 0
+    user_tool_result: 0
+    error: 0
+  max_payload: 0            # 0 = unlimited, else final safety cap applied to payload.text
+
 # Working directory to channel mapping
 directory_patterns:
   "/var/workstation/assistants/": "claude-assistants"

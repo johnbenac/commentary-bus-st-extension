@@ -18,7 +18,19 @@
     speaker: 'Commentator',
     logHeartbeats: false,
     sessionDir: '',          // current session folder being monitored (project path)
-    metaMode: 'inline'       // 'inline' | 'tooltip' | 'off' - how to display message metadata
+    metaMode: 'inline',      // 'inline' | 'tooltip' | 'off' - how to display message metadata
+    truncation: {
+      enabled: true,
+      indicator: '…',
+      preset: 'standard', // 'short'|'standard'|'verbose'|'full'
+      limits: {
+        assistant_text: 2500,
+        assistant_tool_use: 1200,
+        user_text: 2500,
+        user_tool_result: 1200,
+        error: 2000
+      }
+    }
   });
 
   /** @type {ReturnType<typeof SillyTavern.getContext>} */
@@ -123,6 +135,37 @@
             </select>
             <small>Show message type info as muted text, tooltip, or hide</small>
 
+            <div style="margin-top:10px;padding:8px;border:1px solid var(--SmartThemeBorderColor);border-radius:4px;">
+              <label style="font-weight:bold;display:block;margin-bottom:6px;">Truncation</label>
+              <label class="checkbox_label">
+                <input id="cbus-trunc-enabled" type="checkbox" />
+                <span>Enable client-side truncation</span>
+              </label>
+
+              <label for="cbus-trunc-preset">Preset:</label>
+              <select id="cbus-trunc-preset" class="text_pole">
+                <option value="short">Short</option>
+                <option value="standard">Standard</option>
+                <option value="verbose">Verbose</option>
+                <option value="full">Full (no truncation)</option>
+              </select>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;">
+                <div><label>assistant_text</label><input id="cbus-lim-assistant-text" class="text_pole" type="number" min="0" /></div>
+                <div><label>assistant_tool_use</label><input id="cbus-lim-assistant-tool" class="text_pole" type="number" min="0" /></div>
+                <div><label>user_text</label><input id="cbus-lim-user-text" class="text_pole" type="number" min="0" /></div>
+                <div><label>user_tool_result</label><input id="cbus-lim-user-tool" class="text_pole" type="number" min="0" /></div>
+                <div><label>error</label><input id="cbus-lim-error" class="text_pole" type="number" min="0" /></div>
+              </div>
+
+              <label class="checkbox_label" style="margin-top:6px;">
+                <input id="cbus-trunc-indicator-enabled" type="checkbox" checked />
+                <span>Append indicator</span>
+              </label>
+              <input id="cbus-trunc-indicator" class="text_pole" type="text" style="width:6em" value="…" />
+              <small>0 in any field = unlimited for that subtype</small>
+            </div>
+
             <div style="margin-top: 10px; padding: 8px; border: 1px solid var(--SmartThemeBorderColor); border-radius: 4px;">
               <label style="font-weight: bold; margin-bottom: 5px; display: block;">Project Directory Path:</label>
               <div style="margin-bottom: 8px;">
@@ -201,6 +244,42 @@
       ctx.saveSettingsDebounced();
     });
 
+    // Truncation settings handlers
+    const applyPreset = (preset) => {
+      const T = st.truncation;
+      T.preset = preset;
+      const map = {
+        short:    { assistant_text: 800,  assistant_tool_use: 400, user_text: 800,  user_tool_result: 400, error: 800 },
+        standard: { assistant_text: 2500, assistant_tool_use: 1200,user_text: 2500, user_tool_result: 1200,error: 2000 },
+        verbose:  { assistant_text: 8000, assistant_tool_use: 4000,user_text: 8000, user_tool_result: 4000,error: 4000 },
+        full:     { assistant_text: 0,    assistant_tool_use: 0,   user_text: 0,    user_tool_result: 0,   error: 0 }
+      };
+      T.limits = { ...T.limits, ...(map[preset] || map.standard) };
+      ctx.saveSettingsDebounced();
+      refreshSettingsUI();
+    };
+    
+    $('#cbus-trunc-enabled').on('change', function () {
+      st.truncation.enabled = this.checked;
+      ctx.saveSettingsDebounced();
+    });
+    $('#cbus-trunc-preset').on('change', function () { applyPreset(this.value); });
+    
+    const num = (v) => Math.max(0, parseInt(String(v||'0'),10) || 0);
+    $('#cbus-lim-assistant-text').on('input', function(){ st.truncation.limits.assistant_text = num(this.value); ctx.saveSettingsDebounced(); });
+    $('#cbus-lim-assistant-tool').on('input', function(){ st.truncation.limits.assistant_tool_use = num(this.value); ctx.saveSettingsDebounced(); });
+    $('#cbus-lim-user-text').on('input', function(){ st.truncation.limits.user_text = num(this.value); ctx.saveSettingsDebounced(); });
+    $('#cbus-lim-user-tool').on('input', function(){ st.truncation.limits.user_tool_result = num(this.value); ctx.saveSettingsDebounced(); });
+    $('#cbus-lim-error').on('input', function(){ st.truncation.limits.error = num(this.value); ctx.saveSettingsDebounced(); });
+    $('#cbus-trunc-indicator-enabled').on('change', function(){
+      st.truncation.appendIndicator = this.checked;
+      ctx.saveSettingsDebounced();
+    });
+    $('#cbus-trunc-indicator').on('input', function(){
+      st.truncation.indicator = this.value || '…';
+      ctx.saveSettingsDebounced();
+    });
+
     $('#cbus-test').on('click', async () => {
       try {
         const res = await fetch(st.serviceUrl.replace(/\/$/, '') + '/status');
@@ -265,6 +344,17 @@
     $('#cbus-session-dir').val(st.sessionDir || '');
     $('#cbus-active-channel').text(computeChannel());
     $('#cbus-last-url').text(lastUrl || '-');
+    
+    // Truncation settings
+    $('#cbus-trunc-enabled').prop('checked', !!st.truncation?.enabled);
+    $('#cbus-trunc-preset').val(st.truncation?.preset || 'standard');
+    $('#cbus-lim-assistant-text').val(st.truncation?.limits?.assistant_text ?? 2500);
+    $('#cbus-lim-assistant-tool').val(st.truncation?.limits?.assistant_tool_use ?? 1200);
+    $('#cbus-lim-user-text').val(st.truncation?.limits?.user_text ?? 2500);
+    $('#cbus-lim-user-tool').val(st.truncation?.limits?.user_tool_result ?? 1200);
+    $('#cbus-lim-error').val(st.truncation?.limits?.error ?? 2000);
+    $('#cbus-trunc-indicator-enabled').prop('checked', st.truncation?.appendIndicator !== false);
+    $('#cbus-trunc-indicator').val(st.truncation?.indicator ?? '…');
   }
 
   // Remount when Extensions panel re-renders
@@ -380,6 +470,43 @@
     return `${text}\n\n*${metaLabel}*`;
   }
 
+  // --- Client-side truncation functions ---
+  function applyClientTruncation(payload, cleanText) {
+    const st = getSettings();
+    const T = st.truncation || {};
+    if (!T.enabled) return { text: cleanText, truncated: false, full: cleanText };
+    const limits = T.limits || {};
+    const limit = limits[payload.subtype] ?? 0; // 0 = unlimited
+    if (!limit || cleanText.length <= limit) return { text: cleanText, truncated: false, full: cleanText };
+    const ind = (T.appendIndicator !== false) ? (T.indicator || '…') : '';
+    return { text: cleanText.slice(0, Math.max(0, limit)) + ind + ' [show more]', truncated: true, full: cleanText };
+  }
+
+  function postAttachExpandForLastBubble(fullText, metaLabel, payload, isUser) {
+    try {
+      const $bubbles = $('.mes');
+      const $last = $bubbles.last();
+      const $txt = $last.find('.mes_text').last();
+      if (!$txt.length) return;
+      // Only attach if we actually appended [show more]
+      const hasMarker = /\[show more\]$/.test($txt.text().trim());
+      if (!hasMarker) return;
+      // Replace marker with clickable span
+      const html = $txt.html().replace(/\[show more\]$/, '<span class="cbus-show-more" style="color:var(--SmartThemeLinkColor);cursor:pointer;">show more</span>');
+      $txt.html(html);
+      $txt.find('.cbus-show-more').on('click', () => {
+        // Expand to full text (preserve meta label if inline)
+        const st = getSettings();
+        const metaMode = st.metaMode || 'inline';
+        let expanded = fullText;
+        if (metaMode === 'inline' && metaLabel) expanded = appendInlineMeta(expanded, metaLabel);
+        $txt.text(expanded); // simple replace; could fancy-format if needed
+        // Add "show less"?
+        // (Optional) Attach a 'show less' to collapse back if desired.
+      });
+    } catch {}
+  }
+
   function attachTooltipToLastBubble(metaLabel) {
     if (!metaLabel) return;
     try {
@@ -425,9 +552,13 @@
         try {
           const payload = JSON.parse(e.data ?? '{}');
           const parsed = parsePrefix(payload.text ?? '');
-          let text = parsed.text;
+          const cleanText = parsed.text;
           const metaLabel = parsed.meta?.label || '';
           const isUserMessage = payload.isUserMessage === true;
+          
+          // Apply client-side truncation
+          const trunc = applyClientTruncation(payload, cleanText);
+          let text = trunc.text;
           
           if (!text) return;
 
@@ -446,6 +577,9 @@
               // Small delay to let bubble render
               setTimeout(() => attachTooltipToLastBubble(metaLabel), 50);
             }
+            if (trunc.truncated) {
+              setTimeout(() => postAttachExpandForLastBubble(trunc.full, metaLabel, payload, true), 60);
+            }
           } else {
             // For other messages, check if we should override the name
             let name = payload.name;
@@ -463,6 +597,9 @@
             await sendAs(name, text, false);
             if (metaMode === 'tooltip' && metaLabel) {
               setTimeout(() => attachTooltipToLastBubble(metaLabel), 50);
+            }
+            if (trunc.truncated) {
+              setTimeout(() => postAttachExpandForLastBubble(trunc.full, metaLabel, payload, false), 60);
             }
           }
         } catch (err) {
