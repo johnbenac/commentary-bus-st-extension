@@ -183,6 +183,32 @@ function hardCapString(subtype, raw) {
   return raw.slice(0, Math.max(0, cap)) + ind;
 }
 
+// Prefer the first present key; stringify objects/arrays nicely
+function pickFirst(obj, keys = []) {
+  for (const k of keys) if (obj && obj[k] != null && obj[k] !== '') return obj[k];
+  return null;
+}
+
+function asFlatText(val, limitJson = 20000) {
+  if (val == null) return '';
+  if (typeof val === 'string') return val;
+  try { return JSON.stringify(val, null, 2).slice(0, limitJson); }
+  catch { return String(val); }
+}
+
+// Extract meaningful tool content from either tool input or attached toolUseResult echo
+function extractToolPrimary(event, toolName, toolInput) {
+  // Common fields used by various tools
+  const fields = ['plan','prompt','description','query','url','path','file_path','message','text','value','content','args'];
+  let primary = pickFirst(toolInput, fields);
+
+  // Fall back to the toolUseResult echo (e.g., user approval that includes the plan)
+  if (!primary && event?.toolUseResult) {
+    primary = pickFirst(event.toolUseResult, ['plan','prompt','description','result','output','content','text']);
+  }
+  return asFlatText(primary);
+}
+
 // ---------- Unified message helpers ----------
 
 // Extract all text blocks in order (works for user & assistant)
@@ -201,21 +227,75 @@ function extractTextBlocks(event) {
   return '';
 }
 
-// Summarize user tool_result blocks (if you choose to show them)
+// Show meaningful tool result content with intelligent formatting
 function formatUserToolResult(event) {
   const blocks = (event?.message?.content || []).filter(b => b?.type === 'tool_result');
   if (!blocks.length) return '';
-  const parts = [];
-  for (const [i, b] of blocks.entries()) {
-    const raw = typeof b.content === 'string' ? b.content
-      : (Array.isArray(b.content) ? JSON.stringify(b.content) : String(b.content ?? ''));
-    parts.push(`#${i+1} ${truncate(raw, 800)}`);
-    if (i === 1 && blocks.length > 2) { // cap preview
-      parts.push(`(+${blocks.length - 2} more)`);
-      break;
+  
+  const firstBlock = blocks[0];
+  const content = firstBlock?.content || '';
+  
+  // Handle rejection/error cases
+  if (firstBlock?.is_error) {
+    if (typeof content === 'string') {
+      if (content.includes("doesn't want to proceed")) {
+        return '❌ Tool rejected by user';
+      }
+      if (content.includes("Request interrupted")) {
+        return '⏸️ Request interrupted';
+      }
+      // Generic error - show truncated
+      return `❌ Error: ${truncate(content, 100)}`;
     }
   }
-  return `🧰 Tool result${blocks.length > 1 ? 's' : ''}: ${parts.join(' | ')}`;
+  
+  // Handle approval messages (especially for ExitPlanMode)
+  if (typeof content === 'string' && content.includes("User has approved")) {
+    // Check if this is a plan approval with echo
+    if (event.toolUseResult?.plan) {
+      return '✅ Plan approved';  // Brief since plan was already shown
+    }
+    return '✅ Approved';
+  }
+  
+  // Handle successful tool results with meaningful data
+  if (event.toolUseResult && !firstBlock?.is_error) {
+    const result = event.toolUseResult;
+    
+    // File operations
+    if (result.type === 'create') {
+      return `📄 Created: ${result.filePath}`;
+    }
+    if (result.type === 'edit') {
+      const preview = truncate(result.oldString || '', 50);
+      return `✏️ Edited: ${preview}...`;
+    }
+    if (result.type === 'text' && result.file) {
+      return `📖 Read: ${result.file.filePath} (${result.file.numLines} lines)`;
+    }
+    
+    // TodoWrite results
+    if (result.oldTodos && result.newTodos) {
+      const changes = result.newTodos.length - result.oldTodos.length;
+      if (changes > 0) return `📝 Added ${changes} todo${changes > 1 ? 's' : ''}`;
+      if (changes < 0) return `📝 Removed ${-changes} todo${-changes < 1 ? 's' : ''}`;
+      return `📝 Updated todos`;
+    }
+    
+    // Generic tool result with content extraction
+    const extracted = extractToolPrimary(event, '', result);
+    if (extracted) {
+      return `✅ ${truncate(extracted, 200)}`;
+    }
+  }
+  
+  // Default: show first result briefly
+  if (typeof content === 'string') {
+    return truncate(content, 150);
+  }
+  
+  // Fallback for complex content
+  return `📋 Tool result (${blocks.length} item${blocks.length > 1 ? 's' : ''})`;
 }
 
 // Subtype classifier: one place to decide routing
@@ -260,26 +340,44 @@ function originFor(subtype) {
   return 'assistant';
 }
 
-// Format tool messages - copied from working bridge
+// Format tool messages - improved version with content extraction
 function formatToolMessage(event) {
   const toolName = event.tool_name;
   if (!toolName) return `🔧 Tool executed`;
+
+  // Pull the matching tool_use input payload (already set in tail loop)
   let toolInput = {};
   if (event.message?.content) {
     for (const c of event.message.content) {
       if (c.type === 'tool_use' && c.name === toolName) { toolInput = c.input || {}; break; }
     }
   }
+
+  // Per-tool niceties + robust default
   switch (toolName) {
-    case 'Bash':  return `${toolInput.command || ''} → ${toolInput.description || ''}`;
+    case 'Bash': {
+      const cmd = toolInput.command || '';
+      const desc = toolInput.description || '';
+      return `${cmd}${desc ? ` → ${desc}` : ''}`;
+    }
     case 'Write': {
-      const p = toolInput.file_path || ''; const content = toolInput.content || '';
+      const p = toolInput.file_path || '';
+      const content = toolInput.content || '';
       return `Writing ${p} (${content.length}B): ${truncate(content, 2000)}`;
     }
-    case 'Read':  return `Reading ${toolInput.file_path || ''}${toolInput.limit ? ` (${toolInput.limit} lines)` : ''}: ${toolInput.description || ''}`;
-    case 'Edit':  return `Editing ${toolInput.file_path || ''}: "${truncate(toolInput.old_string || '', 500)}" → "${truncate(toolInput.new_string || '', 500)}"`;
+    case 'Read': {
+      const p = toolInput.file_path || '';
+      const lim = toolInput.limit ? ` (${toolInput.limit} lines)` : '';
+      const d  = toolInput.description || '';
+      return `Reading ${p}${lim}: ${d}`;
+    }
+    case 'Edit': {
+      const p = toolInput.file_path || '';
+      return `Editing ${p}: "${truncate(toolInput.old_string || '', 500)}" → "${truncate(toolInput.new_string || '', 500)}"`;
+    }
     case 'MultiEdit': {
-      const p = toolInput.file_path || ''; const editsCount = toolInput.edits?.length || 0;
+      const p = toolInput.file_path || '';
+      const editsCount = toolInput.edits?.length || 0;
       const details = toolInput.edits?.slice(0,2).map(e => `"${truncate(e.old_string,100)}" → "${truncate(e.new_string,100)}"`).join('; ') || '';
       return `MultiEdit ${p}: ${editsCount} changes - ${details}`;
     }
@@ -292,11 +390,29 @@ function formatToolMessage(event) {
     }
     case 'TodoWrite': {
       const n = toolInput.todos?.length || 0;
-      const d = toolInput.todos?.slice(0,2).map(t => `${t.status}: "${truncate(t.content, 100)}"`).join('; ') || '';
+      const d = toolInput.todos?.slice(0,2).map(t => `${t.status}: "${t.content?.substring(0, 100) || ''}${t.content?.length > 100 ? '...' : ''}"`).join('; ') || '';
       return `${n} todos updated → ${d}${n>2?` (and ${n-2} more)`:''}`;
     }
-    case 'LS':    return `Listing ${toolInput.path || ''}${toolInput.ignore ? ` (ignoring: ${toolInput.ignore.join(', ')})` : ''}`;
-    default:      return `${toolName}: ${toolInput.description || ''}`;
+    // ——— New: show the actual plan title + body for ExitPlanMode ———
+    case 'ExitPlanMode': {
+      const body = extractToolPrimary(event, toolName, toolInput) || '';
+      const title = (body.match(/^#{1,6}\s*(.+)$/m)?.[1] || 'Plan').trim();
+      return `ExitPlanMode: ${title}\n\n${body}`;
+    }
+    // ——— Examples for common "content-carrying" tools ———
+    case 'WebSearch': {
+      const q = pickFirst(toolInput, ['query','q']) || '(empty query)';
+      return `WebSearch: ${q}`;
+    }
+    case 'Task': {
+      const p = pickFirst(toolInput, ['prompt','description']) || '';
+      return `Task: ${truncate(p, 4000)}`;
+    }
+    default: {
+      // Robust default: look across many keys (plan/prompt/query/etc.)
+      const summary = extractToolPrimary(event, toolName, toolInput);
+      return `${toolName}: ${summary || '(no details)'}`;
+    }
   }
 }
 
