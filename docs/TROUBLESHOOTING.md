@@ -28,7 +28,7 @@
 
 4. **Restart the unified service:**
    ```bash
-   cd commentary-bus-st-extension/unified-service
+   cd unified-service/
    node commentary-service.js
    ```
 
@@ -81,6 +81,31 @@
 3. **Browser extensions:**
    - Ad blockers might interfere
    - Try in incognito mode
+
+### Attribution Issues (Human vs AI)
+
+**Symptoms:**
+- User approvals showing as "Tools" instead of user name
+- Decisions not properly attributed to humans
+- Wrong speaker shown for messages
+
+**Solutions:**
+
+1. **Update to latest version:**
+   - Service must have attribution fix (v2.1.1+)
+   - Extension must support attribution metadata
+   - Restart both service and browser
+
+2. **Check filters.yaml configuration:**
+   ```yaml
+   include_subtypes:
+     - user_approval
+     - user_rejection
+   ```
+
+3. **Verify decision patterns:**
+   - Service detects patterns like "approved", "rejected"
+   - Check service logs for decision detection
 
 ### Extension Not Visible
 
@@ -172,7 +197,6 @@ es.onerror = (e) => console.error('Error:', e);
 - Firewall blocking connection
 
 ### "CORS policy" errors
-- Server CORS not configured for your URL
 - Using http:// with https:// SillyTavern
 - Browser security blocking local connections
 
@@ -240,7 +264,7 @@ If all else fails:
 
 2. **Version info:**
    - Node.js: `node --version` (needs 16+)
-   - Check `manifest.json` for extension version (should be 2.0.0)
+   - Check `manifest.json` for extension version
    - SillyTavern version in About dialog
    - Service version in `unified-service/package.json`
 

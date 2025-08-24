@@ -1,348 +1,238 @@
 # Examples 💡
 
-## Claude Code Monitoring
+## Claude Code Monitoring with Attribution
 
 ### Live Development Commentary
 
-When you set a project directory path in the extension, Claude's activity automatically appears:
+When monitoring a Claude project, you'll see activity with proper attribution:
 
 ```
 Claude: Reading config.yaml (46 lines)
 Claude: Writing server.js (1234B): // Express server setup...
-Claude: Searching for "TODO" in ./src
-Claude: 5 todos updated → pending: "Add error handling"...
+Claude: ExitPlanMode: Implement OAuth2 Authentication
+
+## Plan to Implement OAuth2
+- Add passport dependency
+- Create auth middleware
+- Set up Google OAuth strategy
+
+Johnny: ✅ Approved · Implement OAuth2 Authentication
+Claude: npm install passport passport-google-oauth20
+Tools: added 15 packages in 2.341s
+Claude: Writing auth/oauth.js (567B): const passport = require('passport')...
 ```
 
-No additional setup needed - just configure the project path!
+Notice how:
+- **Claude's actions** show as "Claude"
+- **Your approval** shows with your name (Johnny)
+- **System outputs** show as "Tools"
 
 ## Basic Message Sending
 
-### Bash/cURL
-
+### Simple Message
 ```bash
-# Simple message
 curl -X POST http://127.0.0.1:5055/ingest \
   -H 'Content-Type: application/json' \
   -d '{"text": "Hello from bash!"}'
-
-# With custom speaker
-curl -X POST http://127.0.0.1:5055/ingest \
-  -H 'Content-Type: application/json' \
-  -d '{"name": "System", "text": "CPU usage is high!"}'
-
-# To specific channel
-curl -X POST http://127.0.0.1:5055/ingest \
-  -H 'Content-Type: application/json' \
-  -d '{"channel": "alerts", "text": "Disk space low"}'
 ```
 
-## Scripted Narration
-
-### Random Events Script
-
+### Custom Speaker
 ```bash
-#!/bin/bash
-# random-events.sh - Send random events every few minutes
-
-EVENTS=(
-  "A mysterious merchant arrives at the tavern"
-  "Thunder rumbles in the distance"
-  "You hear wolves howling nearby"
-  "The wind picks up, rustling through the trees"
-  "A shooting star streaks across the sky"
-)
-
-while true; do
-  # Pick random event
-  EVENT="${EVENTS[$RANDOM % ${#EVENTS[@]}]}"
-  
-  # Send to Commentary Bus
-  curl -s -X POST http://127.0.0.1:5055/ingest \
-    -H 'Content-Type: application/json' \
-    -d "{\"name\": \"Narrator\", \"text\": \"$EVENT\"}"
-  
-  # Wait 3-10 minutes
-  sleep $((180 + RANDOM % 420))
-done
+curl -X POST http://127.0.0.1:5055/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "System Monitor", "text": "CPU usage: 45%"}'
 ```
 
-## System Monitoring
-
-### Python System Monitor
-
-```python
-#!/usr/bin/env python3
-# system-monitor.py - Report system stats periodically
-
-import psutil
-import requests
-import time
-
-def send_message(text, name="System Monitor"):
-    requests.post('http://127.0.0.1:5055/ingest', 
-                  json={'name': name, 'text': text})
-
-def monitor_system():
-    while True:
-        # CPU check
-        cpu = psutil.cpu_percent(interval=1)
-        if cpu > 80:
-            send_message(f"⚠️ High CPU usage: {cpu}%")
-        
-        # Memory check
-        mem = psutil.virtual_memory().percent
-        if mem > 90:
-            send_message(f"⚠️ Low memory: {mem}% used")
-        
-        # Disk check
-        disk = psutil.disk_usage('/').percent
-        if disk > 90:
-            send_message(f"⚠️ Low disk space: {disk}% used")
-        
-        time.sleep(60)  # Check every minute
-
-if __name__ == "__main__":
-    monitor_system()
+### Specific Channel
+```bash
+curl -X POST http://127.0.0.1:5055/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{"channel": "alerts", "text": "Disk space low", "name": "Monitor"}'
 ```
 
-## Game Integration
+## Monitoring Agent Attribution
 
-### Dice Roller with Commentary
+### Watch Attribution in Real-Time
+
+Connect to the SSE stream and observe attribution:
 
 ```javascript
-// dice-roller.js - Roll dice and narrate results
+const events = new EventSource('http://127.0.0.1:5055/events');
 
-function rollDice(sides = 20) {
-  return Math.floor(Math.random() * sides) + 1;
-}
-
-async function narratedRoll(character, action) {
-  const roll = rollDice();
-  let narration;
+events.addEventListener('chat', (e) => {
+  const msg = JSON.parse(e.data);
+  const actor = msg.attribution.actor_type;
+  const decision = msg.attribution.decision;
   
-  if (roll === 20) {
-    narration = `🎯 CRITICAL SUCCESS! ${character} ${action} with incredible skill!`;
-  } else if (roll === 1) {
-    narration = `💥 CRITICAL FAILURE! ${character} completely botches ${action}!`;
-  } else if (roll >= 15) {
-    narration = `✅ Success! ${character} ${action} effectively. (Rolled ${roll})`;
-  } else if (roll >= 10) {
-    narration = `📊 Partial success. ${character} ${action}, but with complications. (Rolled ${roll})`;
-  } else {
-    narration = `❌ Failure. ${character} fails to ${action}. (Rolled ${roll})`;
+  console.log(`[${actor}] ${msg.name || 'User'}: ${msg.text}`);
+  
+  if (decision) {
+    console.log(`  → Decision: ${decision}`);
   }
-  
-  await fetch('http://127.0.0.1:5055/ingest', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name: 'Dice Master',
-      text: narration
-    })
-  });
-}
-
-// Usage
-narratedRoll("Aragorn", "leap across the chasm");
-narratedRoll("Gimli", "persuade the bartender");
+});
 ```
 
-## Time-Based Events
+Output:
+```
+[assistant] Claude: ExitPlanMode: Database Migration Plan
+[human] Johnny: ✅ Approved · Database Migration Plan
+  → Decision: approved
+[assistant] Claude: psql -U postgres -d myapp
+[tool] Tools: Database connection established
+```
 
-### Daily Schedule
+## Decision Tracking Script
+
+### Log Human Decisions
+
+Track all approvals and rejections:
 
 ```python
 #!/usr/bin/env python3
-# daily-events.py - Send time-based narrative events
-
-import schedule
+import json
 import requests
+import sseclient
 from datetime import datetime
 
-def send(text, name="Timekeeper"):
-    requests.post('http://127.0.0.1:5055/ingest',
-                  json={'name': name, 'text': text})
+# Connect to SSE stream
+response = requests.get('http://127.0.0.1:5055/events', stream=True)
+client = sseclient.SSEClient(response)
 
-def morning():
-    send("☀️ The sun rises over the horizon. A new day begins.")
+decisions = []
 
-def noon():
-    send("🌞 The sun reaches its peak. The market square bustles with activity.")
-
-def evening():
-    send("🌅 The sun sets, painting the sky in shades of orange and purple.")
-
-def night():
-    send("🌙 Night falls. The stars twinkle overhead.")
-
-def hourly():
-    hour = datetime.now().hour
-    if hour == 13:
-        send("🕐 The church bells toll once. It's 1 o'clock.")
-    elif hour == 0:
-        send("🕛 Midnight strikes! The witching hour begins...")
-
-# Schedule events
-schedule.every().day.at("06:00").do(morning)
-schedule.every().day.at("12:00").do(noon)
-schedule.every().day.at("18:00").do(evening)
-schedule.every().day.at("22:00").do(night)
-schedule.every().hour.do(hourly)
-
-print("Daily events scheduler running...")
-while True:
-    schedule.run_pending()
-    time.sleep(60)
-```
-
-## Integration Examples
-
-### Discord Bot Integration
-
-```python
-# discord-bridge.py - Forward Discord messages to SillyTavern
-
-import discord
-import requests
-
-class CommentaryBot(discord.Client):
-    async def on_message(self, message):
-        # Ignore bot's own messages
-        if message.author == self.user:
-            return
+for event in client.events():
+    if event.event == 'chat':
+        data = json.loads(event.data)
+        attr = data.get('attribution', {})
         
-        # Forward messages from specific channel
-        if message.channel.name == "tavern-events":
-            requests.post('http://127.0.0.1:5055/ingest', json={
-                'name': f"Discord/{message.author.name}",
-                'text': message.content,
-                'channel': 'discord-bridge'
-            })
-
-# Run the bot
-bot = CommentaryBot()
-bot.run('YOUR_DISCORD_TOKEN')
+        # Track human decisions
+        if attr.get('decision') in ['approved', 'rejected']:
+            decision = {
+                'timestamp': datetime.now().isoformat(),
+                'user': data.get('name', 'Unknown'),
+                'decision': attr['decision'],
+                'tool': attr.get('subject_tool'),
+                'text': data['text']
+            }
+            decisions.append(decision)
+            print(f"[{decision['timestamp']}] {decision['user']} {decision['decision']} {decision['tool']}")
+            
+            # Save to file
+            with open('decisions.jsonl', 'a') as f:
+                f.write(json.dumps(decision) + '\n')
 ```
 
-### Weather Updates
+## Game Integration with Attribution
 
-```bash
-#!/bin/bash
-# weather-updates.sh - Post weather to chat
-
-while true; do
-  # Get weather (requires 'curl' and 'jq')
-  WEATHER=$(curl -s "wttr.in/London?format=j1" | jq -r '.current_condition[0]')
-  TEMP=$(echo "$WEATHER" | jq -r '.temp_C')
-  DESC=$(echo "$WEATHER" | jq -r '.weatherDesc[0].value')
-  
-  curl -X POST http://127.0.0.1:5055/ingest \
-    -H 'Content-Type: application/json' \
-    -d "{\"name\": \"Weather Service\", \"text\": \"🌤️ Current weather: ${DESC}, ${TEMP}°C\"}"
-  
-  sleep 3600  # Update hourly
-done
-```
-
-## Advanced Patterns
-
-### Multi-Channel Router
+### Dice Roller with Clear Attribution
 
 ```javascript
-// channel-router.js - Route different types of messages
-
-class CommentaryRouter {
+class AttributedDiceRoller {
   constructor(baseUrl = 'http://127.0.0.1:5055') {
     this.baseUrl = baseUrl;
   }
 
-  async send(channel, name, text) {
-    return fetch(`${this.baseUrl}/ingest`, {
+  async narrateRoll(character, action, isPlayer = true) {
+    const roll = Math.floor(Math.random() * 20) + 1;
+    const speaker = isPlayer ? character : 'Dice Master';
+    
+    let narration;
+    if (roll === 20) {
+      narration = `🎯 CRITICAL SUCCESS! ${character} ${action} brilliantly!`;
+    } else if (roll === 1) {
+      narration = `💥 CRITICAL FAILURE! ${character} fails spectacularly!`;
+    } else if (roll >= 15) {
+      narration = `✅ Success! ${character} ${action}. (${roll})`;
+    } else if (roll >= 10) {
+      narration = `📊 Partial success. ${character} ${action} with difficulty. (${roll})`;
+    } else {
+      narration = `❌ Failure. ${character} cannot ${action}. (${roll})`;
+    }
+    
+    await fetch(`${this.baseUrl}/ingest`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ channel, name, text })
+      body: JSON.stringify({
+        name: speaker,
+        text: narration,
+        channel: 'game',
+        meta: {
+          isPlayerAction: isPlayer,
+          roll: roll,
+          character: character
+        }
+      })
     });
-  }
-
-  // Different message types to different channels
-  async systemAlert(text) {
-    return this.send('alerts', 'System', `🚨 ${text}`);
-  }
-
-  async gameEvent(text) {
-    return this.send('game', 'Game Master', text);
-  }
-
-  async narration(text) {
-    return this.send('story', 'Narrator', `📖 ${text}`);
-  }
-
-  async weatherUpdate(text) {
-    return this.send('environment', 'Weather', `🌤️ ${text}`);
   }
 }
 
-// Usage
-const router = new CommentaryRouter();
-router.systemAlert("Backup completed successfully");
-router.gameEvent("A new quest is available!");
-router.narration("Meanwhile, in the forgotten ruins...");
+// Usage showing clear attribution
+const roller = new AttributedDiceRoller();
+
+// Player action - attributed to player
+await roller.narrateRoll("Aragorn", "leap across the chasm", true);
+
+// NPC action - attributed to Dice Master
+await roller.narrateRoll("Goblin", "attack with crude sword", false);
 ```
 
-### Message Queue with Retry
+## Audit Trail Generator
+
+### Track All Human-AI Interactions
 
 ```python
-# reliable-sender.py - Queue messages with retry logic
-
+#!/usr/bin/env python3
+import json
 import requests
-import time
-from queue import Queue
-from threading import Thread
+import sseclient
+from collections import defaultdict
 
-class ReliableCommentaryBus:
-    def __init__(self, base_url='http://127.0.0.1:5055'):
-        self.base_url = base_url
-        self.queue = Queue()
-        self.worker = Thread(target=self._process_queue)
-        self.worker.daemon = True
-        self.worker.start()
+class AuditTracker:
+    def __init__(self):
+        self.stats = defaultdict(lambda: defaultdict(int))
+        
+    def track(self):
+        response = requests.get('http://127.0.0.1:5055/events', stream=True)
+        client = sseclient.SSEClient(response)
+        
+        for event in client.events():
+            if event.event == 'chat':
+                data = json.loads(event.data)
+                attr = data.get('attribution', {})
+                actor = attr.get('actor_type', 'unknown')
+                subtype = data.get('subtype', 'unknown')
+                
+                # Track by actor type
+                self.stats[actor][subtype] += 1
+                
+                # Special tracking for decisions
+                if attr.get('decision'):
+                    self.stats['decisions'][attr['decision']] += 1
+                
+                # Print running totals
+                self.print_stats()
     
-    def send(self, text, **kwargs):
-        self.queue.put({'text': text, **kwargs})
-    
-    def _process_queue(self):
-        while True:
-            msg = self.queue.get()
-            retries = 3
-            
-            while retries > 0:
-                try:
-                    requests.post(
-                        f'{self.base_url}/ingest',
-                        json=msg,
-                        timeout=5
-                    )
-                    break  # Success
-                except Exception as e:
-                    retries -= 1
-                    if retries > 0:
-                        time.sleep(2)  # Wait before retry
-                    else:
-                        print(f"Failed to send: {msg}")
+    def print_stats(self):
+        print("\033[2J\033[H")  # Clear screen
+        print("=== Commentary Bus Attribution Stats ===\n")
+        
+        for actor in ['human', 'assistant', 'tool', 'system']:
+            if actor in self.stats:
+                print(f"{actor.upper()}:")
+                for subtype, count in self.stats[actor].items():
+                    print(f"  {subtype}: {count}")
+                print()
+        
+        if 'decisions' in self.stats:
+            print("DECISIONS:")
+            for decision, count in self.stats['decisions'].items():
+                print(f"  {decision}: {count}")
 
-# Usage
-bus = ReliableCommentaryBus()
-bus.send("This message will be queued and retried if needed")
+# Run the tracker
+tracker = AuditTracker()
+tracker.track()
 ```
 
-## Tips & Best Practices
-
-1. **Rate Limiting**: Don't flood the chat - space messages appropriately
-2. **Character Names**: Use consistent names for different types of messages
-3. **Channels**: Use channels to organize different message streams
-4. **Error Handling**: Always handle connection failures gracefully
-5. **Message Format**: Keep messages concise and relevant
-6. **Timestamps**: The server adds timestamps automatically
-7. **Emojis**: Use sparingly but effectively for visual distinction
-
-Happy automating! 🎯
+Output:
+```
+=== Commentary Bus Attribution Stats ===

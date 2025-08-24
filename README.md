@@ -1,188 +1,143 @@
 # Commentary Bus for SillyTavern 🎙️
 
-> Complete system for injecting live commentary into SillyTavern chats from external processes, with specialized Claude Code activity monitoring.
+> Real-time commentary injection for SillyTavern with live Claude Code monitoring and proper agent attribution.
 
 ## What is this?
 
-Commentary Bus is a comprehensive Server-Sent Events (SSE) based system that allows external processes to inject messages into your SillyTavern group chats. The flagship feature is **real-time Claude Code monitoring** that streams your AI development activity directly into SillyTavern as commentary.
+Commentary Bus is a unified service that streams messages into your SillyTavern chats via Server-Sent Events (SSE). The flagship feature is **real-time Claude Code monitoring** with **proper agent attribution** - see exactly who (human or AI) is responsible for each action.
 
 ### 🎯 Key Features
 
-- **🤖 Claude Code Integration** - Monitor Claude sessions in real-time with folder-based architecture
-- **📡 Real-time delivery** - Messages appear instantly via SSE
-- **🔄 Auto-reconnection** - Resilient to network hiccups  
-- **📢 Channel support** - Route messages to specific chats
-- **💾 Message replay** - Late joiners see recent messages
-- **🎨 Clean integration** - Messages appear as proper character in chat
-- **📁 Folder-based monitoring** - Set once, monitor all current and future Claude sessions
-- **🔄 Multi-session support** - Handle concurrent Claude conversations automatically
+- **🤖 Claude Code Integration** - Monitor Claude sessions in real-time
+- **👤 Agent Attribution** - Clear distinction between human decisions and AI/system actions
+- **📡 Real-time Streaming** - Messages appear instantly via SSE
+- **🔄 Auto-reconnection** - Resilient to network interruptions
+- **📢 Multi-channel Support** - Route messages to specific chats
+- **💾 Message Buffering** - Late joiners see recent messages
+- **🎨 Clean Integration** - Messages appear as proper characters
+- **📁 Folder Monitoring** - Set project path once, monitor all sessions
+
+## 🚀 Quick Start
+
+### 1. Start the Unified Service
+```bash
+cd unified-service/
+npm install
+node commentary-service.js
+```
+Service runs on http://127.0.0.1:5055
+
+### 2. Install Extension in SillyTavern
+1. Go to Extensions → Install Extension
+2. Enter: `https://github.com/johnbenac/commentary-bus-st-extension`
+3. Click Install and Enable
+
+### 3. Configure Extension
+1. Set **Service URL** to: `http://127.0.0.1:5055`
+2. Set **Project Directory Path** to your Claude project
+3. Create a "Commentator" character in your chat
+
+### 4. Test It!
+```bash
+curl -X POST http://127.0.0.1:5055/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{"text": "🎉 Commentary Bus is working!"}'
+```
+
+## 🏗️ Architecture
+
+```
+┌─────────────────┐         ┌─────────────────────┐         ┌──────────────┐
+│ SillyTavern     │ ------> │ Unified Commentary  │ ------> │ SillyTavern  │
+│ Extension       │  HTTP   │ Service (:5055)     │   SSE   │ Chat         │
+└─────────────────┘         └─────────────────────┘         └──────────────┘
+                                      ↑
+                                      │
+                            ┌─────────────────────┐
+                            │ Claude Session      │
+                            │ Files (*.jsonl)     │
+                            └─────────────────────┘
+```
+
+## 🌟 Agent Attribution (New!)
+
+The system now properly attributes actions to the correct agent:
+
+### Human Actions
+- **Approvals**: "✅ Approved · Plan Title" (shown as user)
+- **Rejections**: "❌ Rejected" (shown as user)
+- **Direct messages**: Shown with user's persona name
+
+### AI Actions  
+- **Tool usage**: "Reading file.py" (shown as Claude)
+- **Responses**: AI-generated text (shown as Claude)
+
+### System Actions
+- **Tool outputs**: File contents, command results (shown as Tools)
+- **Interruptions**: System messages (shown as System)
+
+This clear attribution helps with:
+- **Accountability** - Know who made each decision
+- **Audit trails** - Track human approvals/rejections
+- **Trust** - See human agency properly represented
+- **Debugging** - Understand decision flows
 
 ## 📦 Repository Structure
 
 ```
 commentary-bus/
-├── unified-service/              # 🎯 Unified Commentary Service v2.0
-│   ├── commentary-service.js    # Combined SSE server + Claude monitor
-│   ├── filters.yaml             # Message filtering configuration
-│   ├── package.json             # Service dependencies
-│   └── README.md                # Service documentation
-├── extension/                    # 🔌 SillyTavern extension
-│   ├── index.js                 # Extension main file
-│   ├── manifest.json            # Extension metadata (at repo root)
-│   └── README.md                # Extension documentation
-├── docs/                         # 📚 Comprehensive documentation
-├── examples/                     # 🔧 Usage examples
-├── README.md                     # This file
-│
-├── claude-commentary-bridge/     # 📦 Legacy: Original bridge service
-├── server/                       # 📦 Legacy: Original SSE server
-└── manifest.json                 # Extension manifest (required at root)
+├── unified-service/          # Main service (SSE + monitoring)
+│   ├── commentary-service.js # Unified service with attribution
+│   ├── filters.yaml         # Message filtering config
+│   └── README.md           # Service documentation
+├── extension/              # SillyTavern extension
+│   ├── index.js           # Extension code
+│   └── README.md          # Extension documentation
+├── docs/                   # Documentation
+│   ├── API.md            # API reference
+│   ├── EXAMPLES.md       # Usage examples
+│   ├── QUICKSTART.md     # Getting started
+│   └── TROUBLESHOOTING.md # Common issues
+└── manifest.json          # Extension manifest
 ```
 
-## 🚀 Quick Start
+## 🔗 API Overview
 
-### 1. Start the Unified Commentary Service
-```bash
-cd unified-service/
-npm install
-node commentary-service.js
-# or with nohup:
-nohup node commentary-service.js &
-```
-Service runs on http://127.0.0.1:5055 (combines SSE server + Claude monitoring)
+All endpoints on port 5055:
 
-### 2. Install Extension in SillyTavern
-1. Go to Extensions → Install Extension
-2. Enter: `https://github.com/johnbenac/commentary-bus-st-extension`
-3. Click Install
-4. Enable in Extensions panel
-
-### 3. Configure Extension
-1. In Extensions panel, find "Commentary Bus"
-2. Set **Service URL** to: `http://127.0.0.1:5055`
-3. Set **Project Directory Path** to your Claude project folder
-4. Example: `/var/workstation/assistants/commentator`
-5. The service automatically transforms this to Claude's internal format
-
-### 4. Add Commentator to Group
-Create a character named "Commentator" and add to your group chat
-
-### 5. Test It!
-
-**Manual test:**
-```bash
-curl -X POST http://127.0.0.1:5055/ingest \
-  -H 'Content-Type: application/json' \
-  -d '{"channel":"default","name":"Commentator","text":"Hello from Commentary Bus v2.0!"}'
-```
-
-**Live Claude activity:**
-- Use Claude Code in your monitored project
-- Activity appears instantly in SillyTavern as commentary
-- See tool usage like: `Reading file.yaml (50 lines)`
-
-## 🏗️ Architecture
-
-### Unified Service Architecture (v2.0)
-```
-SillyTavern Extension → Unified Commentary Service → SillyTavern Chat
-    Config UI              (Port 5055)               Chat Display
-        ↓                      ↓                          ↓
-   Set Project Path    Monitor + Broadcast         Inject as /sendas
-```
-
-### Complete System Flow
-```
-┌─────────────────┐         ┌─────────────────────────┐
-│ SillyTavern     │ ------> │ Unified Commentary      │
-│ Extension UI    │  HTTP   │ Service (Port 5055)    │
-│                 │         │ • SSE Server            │
-│                 │         │ • Claude File Monitor   │
-│                 │         │ • Dynamic Config API    │
-└─────────────────┘         └─────────────────────────┘
-        ↑                              ↓
-        │                         SSE Stream
-        │                              ↓
-        └──────────────────────────────┘
-```
-
-### Data Flow
-1. **Configuration**: Extension sends project path to service API
-2. **Monitoring**: Service watches Claude session files (*.jsonl)
-3. **Processing**: Messages are parsed, formatted, and filtered
-4. **Broadcasting**: Formatted messages sent via SSE to subscribers
-5. **Display**: Extension injects messages into SillyTavern chat
-
-## 🌟 What's New in v2.0
-
-### Folder-Based Claude Monitoring
-- **Set once, forget forever** - Configure a Claude project folder and it works for all sessions
-- **Multi-chat support** - Monitor multiple concurrent Claude conversations automatically  
-- **Auto-discovery** - New Claude sessions are picked up instantly without reconfiguration
-- **Clean architecture** - No fallbacks or complex auto-discovery, just reliable folder monitoring
-- **Path transformation shim** - Enter intuitive project paths, bridge handles Claude's internal format
-
-### Dynamic Configuration from SillyTavern
-- **UI-based configuration** - Set project paths directly in SillyTavern's extension panel
-- **HTTP API** - Bridge exposes API on port 5056 for runtime configuration
-- **No restarts needed** - Switch monitored folders instantly from SillyTavern
-- **User-friendly paths** - Enter `/var/workstation/my-project/` instead of cryptic Claude session paths
-- **Automatic path transformation** - Bridge converts to Claude's internal format transparently
-
-### Message Formatting & Special Characters (v2.0.1)
-- **Fixed pipe character truncation** - Messages with `|` characters now display completely
-- **Proper escaping** - All regex patterns and special characters work correctly
-- **Clean output** - No unnecessary quotes around messages
-- **STscript compliance** - Uses STRICT_ESCAPING mode for robust handling
-
-## 📖 Documentation
-
-- **[Bridge Documentation](claude-commentary-bridge/README.md)** - Claude Code monitoring setup
-- **[Extension Documentation](extension/README.md)** - SillyTavern integration
-- **[Server Documentation](server/README.md)** - Commentary Bus server setup
-- **[API Documentation](docs/API.md)** - HTTP endpoints and usage
-- **[Examples](docs/EXAMPLES.md)** - Common use cases and scripts
+- `GET /events?channel=NAME` - SSE stream
+- `POST /ingest` - Send messages
+- `GET /status` - Service status
+- `POST /config/session-dir` - Configure Claude monitoring
 
 ## 🛠️ Use Cases
 
-### 🆕 Claude Code Integration
-- **Live coding commentary** - See Claude's file operations and tool usage in real-time
-- **Multi-project monitoring** - Switch between Claude projects while maintaining chat continuity  
-- **Development collaboration** - Share Claude's decision-making process with team members
-- **Documentation assistance** - Automatic commentary on code changes and architecture decisions
-- **Learning & teaching** - Visual representation of AI-assisted development workflows
+### Claude Code Monitoring
+- **Live coding commentary** - See file operations and tool usage
+- **Decision tracking** - Human approvals/rejections clearly attributed
+- **Multi-project support** - Switch between projects seamlessly
+- **Learning tool** - Understand AI-assisted development
 
 ### General Commentary
-- **Game narration** - "The dragon awakens..."
-- **System monitoring** - "Server CPU at 90%"  
-- **Time-based events** - "It's midnight, the spell wears off"
-- **External integrations** - Discord bots, webhooks, IoT devices
-- **Automated storytelling** - Weather updates, news, random events
-
-## 🔗 API Endpoints
-
-### Commentary Bus Server (Port 5055)
-- `GET /events?channel=NAME` - SSE stream for channel
-- `POST /ingest` - Send message to channel
-- `GET /status` - Server status and client counts
-
-### Claude Commentary Bridge (Port 5056)  
-- `GET /config/session-dir` - Get current monitored folder
-- `POST /config/session-dir` - Change monitored folder dynamically
-- `GET /status` - Bridge status and active sessions
+- **Game narration** - Dynamic story events
+- **System monitoring** - Server alerts
+- **External integrations** - Discord, webhooks, IoT
+- **Automated updates** - Weather, news, time-based events
 
 ## 📋 Requirements
 
 - Node.js 16+
 - SillyTavern (recent version)
-- Claude Code (for Claude monitoring features)
+- Claude Code (for monitoring features)
 
-## 🎉 Success Stories
+## 🎉 Features in Action
 
-*Working fantastically well as of August 2025!* 
+When you approve a plan in Claude:
+- **Before**: "Tools: approved"
+- **After**: "Johnny: ✅ Approved · Implement OAuth2"
 
-The system successfully bridges the gap between Claude Code development workflows and SillyTavern chat experiences, creating a seamless integration that enhances both productivity and collaboration.
+The system now properly shows that YOU made the decision, not "Tools"!
 
 ---
 
-*Powered by the Claude Commentary Bridge with chokidar + tail-file architecture* 🌉
+*Real-time commentary with proper attribution - know who's responsible for what* 🎯

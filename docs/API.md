@@ -2,7 +2,7 @@
 
 ## Unified Service Endpoints (Port 5055)
 
-The unified service combines all functionality on a single port.
+All functionality is available on a single port.
 
 ### POST `/ingest`
 
@@ -22,13 +22,8 @@ Send a message to be broadcast to connected clients.
 ```json
 {
   "ok": true,
-  "posted": {
-    "type": "chat",
-    "name": "Commentator",
-    "text": "Your message",
-    "ts": 1755662794873,
-    "channel": "default"
-  }
+  "channel": "default",
+  "id": 123
 }
 ```
 
@@ -36,7 +31,7 @@ Send a message to be broadcast to connected clients.
 ```bash
 curl -X POST http://127.0.0.1:5055/ingest \
   -H 'Content-Type: application/json' \
-  -d '{"text": "Hello!", "channel": "game-updates"}'
+  -d '{"text": "Hello from the API!", "channel": "game-updates"}'
 ```
 
 ### GET `/events`
@@ -51,95 +46,65 @@ Server-Sent Events stream for receiving messages.
 - `heartbeat` - Keepalive pulses every 5 seconds
 - `chat` - Actual messages to display
 
-**Example:**
-```bash
-curl -N "http://127.0.0.1:5055/events?channel=game-updates"
-
-# Output:
-event: connected
-data: {"message":"connected","channel":"game-updates","ts":1755662794873}
-
-event: heartbeat
-data: {"type":"heartbeat","ts":1755662799877,"channel":"game-updates","clients":1}
-
-event: chat
-data: {"type":"chat","name":"Commentator","text":"Hello!","ts":1755662804881,"channel":"game-updates"}
-```
-
-### GET `/status`
-
-Check server health and connection count.
-
-**Response:**
+**Message Payload with Attribution:**
 ```json
 {
-  "status": "running",
-  "clientsTotal": 3,
-  "channels": {
-    "default": 2,
-    "game-updates": 1
-  },
-  "ts": 1755662794873
-}
-```
-
-## Message Format
-
-### Basic Message
-```json
-{
-  "text": "The simplest message"
-}
-```
-
-### Full Message
-```json
-{
-  "channel": "my-game",
-  "name": "Game Master",
-  "text": "A goblin appears!",
-  "meta": {
-    "priority": "high",
-    "sound": "alert.mp3"
+  "channel": "default",
+  "name": null,              // null = user persona
+  "text": "✅ Approved · Implement OAuth2",
+  "ts": 1756789123456,
+  "type": "user",
+  "subtype": "user_approval",
+  "sessionFile": "session-123.jsonl",
+  "isUserMessage": true,
+  "attribution": {
+    "actor_type": "human",
+    "actor_label": null,
+    "subject_tool": "ExitPlanMode",
+    "decision": "approved"
   }
 }
 ```
 
-## Channel Patterns
+**Example:**
+```bash
+curl -N "http://127.0.0.1:5055/events?channel=default"
 
-### Static Channels
-Use fixed channel names:
-- `"default"` - Main channel
-- `"alerts"` - System notifications
-- `"game"` - Game events
+# Output:
+event: connected
+data: {"type":"connected","ts":1756789123456,"channel":"default","clients":1}
 
-### Dynamic Channels
-The extension supports `"auto"` mode which creates channels like:
-- `"group-123"` - For group chat #123
-- `"char-alice"` - For character "alice"
+event: chat
+data: {"channel":"default","name":null,"text":"✅ Approved","ts":1756789123456,"type":"user","subtype":"user_approval","isUserMessage":true,"attribution":{"actor_type":"human","decision":"approved"}}
 
-## Rate Limits
-
-- No hard rate limits enforced
-- Buffer stores last 50 messages per channel
-- Recommended: Max 10 messages/second per channel
-
-## Error Responses
-
-### 400 Bad Request
-```json
-{
-  "error": "text required"
-}
+event: heartbeat
+data: {"type":"heartbeat","ts":1756789128456,"channel":"default","clients":1}
 ```
 
-Occurs when:
-- Missing or empty `text` field
-- Invalid JSON in request body
+### GET `/status`
 
-### CORS
+Check service health and connection statistics.
 
-The server accepts requests from any origin (`*`). For production use, you may want to restrict this in the server configuration.
+**Response:**
+```json
+{
+  "clients": {
+    "default": 2,
+    "game-updates": 1
+  },
+  "buffers": {
+    "default": 45,
+    "game-updates": 12
+  },
+  "totalClients": 3,
+  "monitoring": {
+    "enabled": true,
+    "sessionDir": "/root/.claude/projects/-var-workstation-assistants-commentator",
+    "activeTails": 2,
+    "watcherActive": true
+  }
+}
+```
 
 ### GET `/config/session-dir`
 
@@ -148,8 +113,8 @@ Get the current monitored directory configuration.
 **Response:**
 ```json
 {
-  "sessionDir": "/var/workstation/assistants/commentator",
-  "isActive": true,
+  "sessionDir": "/root/.claude/projects/-var-workstation-assistants-commentator",
+  "watching": true,
   "activeTails": 2
 }
 ```
@@ -168,69 +133,176 @@ Update the monitored directory dynamically (no restart needed).
 **Response:**
 ```json
 {
-  "sessionDir": "/var/workstation/my-project",
-  "transformed": "/root/.claude/projects/-var-workstation-my-project",
-  "watchStarted": true
+  "success": true,
+  "sessionDir": "/root/.claude/projects/-var-workstation-my-project",
+  "inputPath": "/var/workstation/my-project"
 }
 ```
 
-**Example:**
-```bash
-curl -X POST http://127.0.0.1:5055/config/session-dir \
-  -H 'Content-Type: application/json' \
-  -d '{"sessionDir": "/var/workstation/assistants/commentator"}'
+**Error Response (400):**
+```json
+{
+  "error": "Session directory not found: /root/.claude/projects/-invalid-path",
+  "inputPath": "/invalid/path",
+  "transformedPath": "/root/.claude/projects/-invalid-path"
+}
 ```
+
+### POST `/config/truncation`
+
+Configure message truncation settings at runtime.
+
+**Request Body:**
+```json
+{
+  "enabled": true,
+  "limits": {
+    "assistant_text": 500,
+    "user_tool_result": 200
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "ok": true,
+  "truncation": {
+    "enabled": true,
+    "indicator": "…",
+    "limits": {
+      "assistant_text": 500,
+      "user_tool_result": 200
+    }
+  }
+}
+```
+
+## Message Attribution
+
+### Subtypes and Attribution
+
+| Subtype | Speaker | Origin | Description |
+|---------|---------|--------|-------------|
+| `user_approval` | User persona | human | Human approved an AI plan |
+| `user_rejection` | User persona | human | Human rejected an AI action |
+| `user_text` | User persona | human | Direct human message |
+| `user_tool_result` | Tools | tool | System-generated output |
+| `user_interrupt` | System | system | User interrupted execution |
+| `assistant_text` | Claude | assistant | AI text response |
+| `assistant_tool_use` | Claude | assistant | AI using a tool |
+
+### Attribution Examples
+
+**Human Approval:**
+```json
+{
+  "name": null,
+  "text": "✅ Approved · Implement OAuth2 Authentication",
+  "subtype": "user_approval",
+  "attribution": {
+    "actor_type": "human",
+    "actor_label": null,
+    "subject_tool": "ExitPlanMode",
+    "decision": "approved"
+  }
+}
+```
+
+**Tool Output:**
+```json
+{
+  "name": "Tools",
+  "text": "📄 Created: config/auth.js",
+  "subtype": "user_tool_result",
+  "attribution": {
+    "actor_type": "tool",
+    "actor_label": "Tools",
+    "subject_tool": "Write",
+    "decision": null
+  }
+}
+```
+
+## Rate Limits
+
+- **Per channel**: 10 messages/minute
+- **Burst capacity**: 20 messages
+- **Buffer size**: 50 messages per channel
+
+## Authentication
+
+Optional authentication via `CBUS_TOKEN` environment variable:
+
+```bash
+# Start service with auth
+CBUS_TOKEN=mysecret node commentary-service.js
+
+# Send authenticated request
+curl -X POST http://127.0.0.1:5055/ingest \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer mysecret' \
+  -d '{"text": "Authenticated message"}'
+```
+
+## CORS
+
+The service accepts requests from any origin (`*`). All necessary CORS headers are included for browser-based access.
 
 ## Client Libraries
 
-### JavaScript/Node.js
+### JavaScript/Browser
 ```javascript
-class CommentaryBusClient {
-  constructor(baseUrl = 'http://127.0.0.1:5055') {
-    this.baseUrl = baseUrl;
-  }
+// Connect to SSE stream
+const events = new EventSource('http://127.0.0.1:5055/events?channel=default');
 
-  async send(text, options = {}) {
-    const response = await fetch(`${this.baseUrl}/ingest`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text,
-        channel: options.channel || 'default',
-        name: options.name || 'Commentator',
-        meta: options.meta
-      })
-    });
-    return response.json();
-  }
-}
+events.onmessage = (e) => {
+  const data = JSON.parse(e.data);
+  console.log(`${data.name || 'User'}: ${data.text}`);
+  console.log(`Attribution: ${data.attribution.actor_type}`);
+};
+
+// Send a message
+fetch('http://127.0.0.1:5055/ingest', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    text: 'Hello from JavaScript!',
+    channel: 'default'
+  })
+});
 ```
 
 ### Python
 ```python
 import requests
+import sseclient
 
-class CommentaryBusClient:
-    def __init__(self, base_url='http://127.0.0.1:5055'):
-        self.base_url = base_url
-    
-    def send(self, text, channel='default', name='Commentator', meta=None):
-        return requests.post(
-            f'{self.base_url}/ingest',
-            json={
-                'text': text,
-                'channel': channel,
-                'name': name,
-                'meta': meta or {}
-            }
-        ).json()
+# Send a message
+requests.post('http://127.0.0.1:5055/ingest', 
+  json={'text': 'Hello from Python!', 'channel': 'default'})
+
+# Receive messages
+response = requests.get('http://127.0.0.1:5055/events?channel=default', 
+  stream=True)
+client = sseclient.SSEClient(response)
+
+for event in client.events():
+    data = json.loads(event.data)
+    print(f"{data.get('name', 'User')}: {data['text']}")
+    print(f"Actor: {data['attribution']['actor_type']}")
 ```
 
-## WebSocket Alternative?
+## Error Responses
 
-No WebSocket support currently. SSE was chosen for:
-- Simplicity (one-way communication)
-- Native browser support
-- Automatic reconnection
-- Works through proxies/firewalls
-- Lower overhead for this use case
+### 400 Bad Request
+- Missing required `text` field
+- Invalid JSON in request body
+- Invalid session directory path
+
+### 401 Unauthorized
+- Invalid or missing auth token (when `CBUS_TOKEN` is set)
+
+### 500 Internal Server Error
+- Service configuration error
+- File system permissions issue
