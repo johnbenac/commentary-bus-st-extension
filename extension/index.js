@@ -631,7 +631,7 @@
     mountSettings();
     
     
-    if (st.enabled) connect();
+    if (getSettings().enabled) connect();
   });
 
   eventSource.on(event_types.CHAT_CHANGED, () => {
