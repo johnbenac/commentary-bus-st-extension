@@ -49,7 +49,8 @@ let config = {
   channels: { default: 'claude-meta' },
   filters: {
     include_types: ['assistant', 'tool_call', 'git_action', 'file_operation', 'session_start', 'user'],
-    include_subtypes: ['assistant_text', 'assistant_tool_use', 'user_text', 'session_start', 'session_end'],
+    // NOTE: include new subtypes so they render without YAML changes
+    include_subtypes: ['assistant_text', 'assistant_tool_use', 'user_text', 'user_approval', 'user_rejection', 'session_start', 'session_end'],
     exclude_subtypes: [],
     exclude_patterns: ['.*heartbeat.*', '.*ping.*'],
     min_message_length: 10
@@ -211,6 +212,47 @@ function extractToolPrimary(event, toolName, toolInput) {
 
 // ---------- Unified message helpers ----------
 
+// --- Decision detection: identify human approvals/rejections encoded as tool_result
+const DECISION_PATTERNS = {
+  approval: [
+    /user has approved/i,          // "User has approved your plan..."
+    /\bapproved\b/i,               // generic approved
+    /\bapprove(s|d)?\b/i,
+    /\bconsent(s|ed)?\b/i
+  ],
+  rejection: [
+    /doesn['']?t want to proceed/i, // "The user doesn't want to proceed..."
+    /\bdecline(s|d)?\b/i,
+    /\breject(s|ed|ion)\b/i,
+    /\bcancel(led|s)?\b/i
+  ]
+};
+
+function detectUserDecision(event) {
+  try {
+    const blocks = (event?.message?.content || []).filter(b => b?.type === 'tool_result');
+    if (!blocks.length) return null;
+    const first = blocks[0];
+    const text = typeof first.content === 'string' ? first.content : '';
+
+    // Heuristics: textual cues + "is_error" for rejections + metadata from toolUseResult
+    const hintedHuman = event?.toolUseResult?.isAgent === false; // Some stacks set this
+    const isUserRole  = event?.message?.role === 'user';          // Redundant but cheap
+
+    const match = (arr) => arr.some(rx => rx.test(text));
+    if (match(DECISION_PATTERNS.approval)) {
+      return { kind: 'approval', reason: 'pattern:approval', confidence: hintedHuman || isUserRole ? 0.95 : 0.80 };
+    }
+    if (first?.is_error && match(DECISION_PATTERNS.rejection)) {
+      return { kind: 'rejection', reason: 'is_error+pattern:rejection', confidence: hintedHuman || isUserRole ? 0.95 : 0.85 };
+    }
+    if (match(DECISION_PATTERNS.rejection)) {
+      return { kind: 'rejection', reason: 'pattern:rejection', confidence: hintedHuman || isUserRole ? 0.90 : 0.75 };
+    }
+    return null;
+  } catch { return null; }
+}
+
 // Extract all text blocks in order (works for user & assistant)
 function extractTextBlocks(event) {
   const c = event?.message?.content;
@@ -314,7 +356,12 @@ function classifyEvent(event) {
     // Handle array content
     if (Array.isArray(c)) {
       const first = c[0];
-      if (first?.type === 'tool_result') return 'user_tool_result';
+      if (first?.type === 'tool_result') {
+        const decision = detectUserDecision(event);
+        if (decision?.kind === 'approval') return 'user_approval';
+        if (decision?.kind === 'rejection') return 'user_rejection';
+        return 'user_tool_result';
+      }
       if (first?.type === 'text' && /\binterrupted\b/i.test(first.text || '')) return 'user_interrupt';
       if (c.some(b => b?.type === 'text')) return 'user_text';
     }
@@ -326,18 +373,31 @@ function classifyEvent(event) {
 
 // Map subtype -> speaker name (overridable later via config if desired)
 function speakerFor(subtype) {
-  if (subtype === 'user_text') return null;  // No name for real user messages - let ST handle it
-  if (subtype === 'user_tool_result') return 'Tools';   // Synthetic tool results
+  if (subtype === 'user_text') return null;             // ST/Persona name
+  if (subtype === 'user_approval') return null;         // Human decision → show as user
+  if (subtype === 'user_rejection') return null;        // Human decision → show as user
+  if (subtype === 'user_tool_result') return 'Tools';   // Actual tool/system output
   if (subtype === 'user_interrupt')  return 'System';   // System interruptions
   return subtype.startsWith('user_') ? 'System' : 'Claude';  // Other user types are system
 }
 
 // Map subtype -> origin type for clearer tagging
 function originFor(subtype) {
+  if (subtype === 'user_approval' || subtype === 'user_rejection') return 'human';
   if (subtype === 'user_tool_result') return 'tool';
   if (subtype === 'user_interrupt')  return 'system';
   if (subtype.startsWith('user_'))   return 'human';
   return 'assistant';
+}
+
+function formatUserDecision(event, kind) {
+  // Prefer concise, auditable summary; include plan title when present
+  const blocks = (event?.message?.content || []).filter(b => b?.type === 'tool_result');
+  const text = (blocks[0] && typeof blocks[0].content === 'string') ? blocks[0].content : '';
+  const planTitle = (event?.toolUseResult?.plan || '').match(/^#{1,6}\s*(.+)$/m)?.[1];
+  const badge = kind === 'approval' ? '✅ Approved' : '❌ Rejected';
+  const detail = planTitle ? ` · ${planTitle.trim()}` : '';
+  return `${badge}${detail}`;
 }
 
 // Format tool messages - improved version with content extraction
@@ -455,6 +515,8 @@ function formatMessage(event) {
     'assistant_tool_use': e => typePrefix + hardCapString('assistant_tool_use', formatToolMessage(e)),
     'assistant_text':     e => typePrefix + hardCapString('assistant_text', extractTextBlocks(e)),
     'user_text':          e => typePrefix + hardCapString('user_text', extractTextBlocks(e)),
+    'user_approval':      e => typePrefix + hardCapString('user_text', formatUserDecision(e, 'approval')),
+    'user_rejection':     e => typePrefix + hardCapString('user_text', formatUserDecision(e, 'rejection')),
     'user_tool_result':   e => typePrefix + hardCapString('user_tool_result', formatUserToolResult(e)),
     'session_start':      () => typePrefix + '🚀 New Claude session started',
     'session_end':        () => typePrefix + '🏁 Session ended',
@@ -506,6 +568,7 @@ async function processMessage(event, sessionFile) {
   const text = formatMessage(event);
   const subtype = classifyEvent(event);
   const speaker = speakerFor(subtype);
+  const origin  = originFor(subtype);
   
   let payload = {
     channel,
@@ -515,7 +578,15 @@ async function processMessage(event, sessionFile) {
     type: event.event || event.type,
     subtype: subtype,
     sessionFile: path.basename(sessionFile),
-    isUserMessage: subtype === 'user_text'  // Flag for real user messages
+    isUserMessage: subtype === 'user_text' || subtype === 'user_approval' || subtype === 'user_rejection',
+    // New lightweight attribution block (optional fields; safe to ignore downstream)
+    attribution: {
+      actor_type: origin,                       // 'human' | 'assistant' | 'tool' | 'system'
+      actor_label: speaker || null,             // null → ST persona (human)
+      subject_tool: event.tool_name || null,    // if relevant
+      decision: (subtype === 'user_approval') ? 'approved' :
+                (subtype === 'user_rejection') ? 'rejected' : null
+    }
   };
   
   const hardMax = config.truncation?.max_payload || 0;
