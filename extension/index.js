@@ -29,7 +29,6 @@
   let es = null;           // EventSource handle
   let lastUrl = '';        // last connected URL (for logs)
   let mounted = false;     // settings drawer mounted?
-  let hasConfigApi = false; // service supports /config/session-dir?
 
   // --- Settings helpers ---
   function ensureSettings() {
@@ -74,15 +73,6 @@
     }
   }
 
-  // --- Service capability detection ---
-  async function serviceSupportsConfigApi(base) {
-    try {
-      const r = await fetch(base.replace(/\/$/, '') + '/config/session-dir', { method: 'GET' });
-      return r.ok; // 200 with JSON {sessionDir,...}
-    } catch { 
-      return false; 
-    }
-  }
 
   // --- Channel helper (auto = per group/char) ---
   function computeChannel() {
@@ -234,11 +224,6 @@
       ctx.saveSettingsDebounced();
       
       if (projectPath) {
-        // Check if service supports config API
-        if (!hasConfigApi) {
-          toastr.info('Your service does not support project path configuration. Upgrade the backend to use this feature.', TITLE);
-          return;
-        }
         
         try {
           // Send project path to unified service for monitoring
@@ -508,17 +493,6 @@
     
     mountSettings();
     
-    // Check service capabilities
-    const st = getSettings();
-    hasConfigApi = await serviceSupportsConfigApi(st.serviceUrl);
-    
-    // If legacy service, show notice and disable project path input
-    if (!hasConfigApi) {
-      $('#cbus-session-dir').prop('disabled', true);
-      try { 
-        toastr.warning('Service is pre-2.0 (no project path support). SSE will still work. Consider upgrading the backend.', TITLE); 
-      } catch {}
-    }
     
     if (st.enabled) connect();
   });

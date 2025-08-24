@@ -1,0 +1,12 @@
+🎙️ Starting Commentary Bus Server...
+🚀 Starting server on http://127.0.0.1:5055
+Press Ctrl+C to stop
+
+Commentary bus http://127.0.0.1:5055
+[SSE] client connect → default
+[SSE] client disconnect ← default
+[SSE] client connect → default
+[SSE] client disconnect ← default
+[SSE] client connect → default
+[SSE] client disconnect ← default
+[SSE] client connect → default
